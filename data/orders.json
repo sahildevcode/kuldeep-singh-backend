@@ -1,0 +1,42 @@
+[
+  {
+    "id": "ORD_00932",
+    "customerName": "Rajesh & Sunita Oberoi",
+    "customerEmail": "oberoi.residence@oberoigroup.com",
+    "customerPhone": "+91 99100 88231",
+    "customerCity": "Golf Links",
+    "customerState": "New Delhi",
+    "date": "18 Aug, 2026",
+    "orderTime": "01:05 PM",
+    "orderMonth": "2026-08",
+    "items": [
+      {
+        "id": "art-05",
+        "type": "artwork",
+        "title": "Serenade at Dawn",
+        "subtitle": "Charcoal & Raw Umber Study on Archival Paper",
+        "price": 95000,
+        "image": "https://images.unsplash.com/photo-1578301978693-85fa9c0320b9?q=80&w=600&auto=format&fit=crop",
+        "quantity": 1,
+        "mediumOrCategory": "Charcoal & Graphite"
+      }
+    ],
+    "subtotal": 95000,
+    "discount": 0,
+    "shipping": 0,
+    "totalAmount": 95000,
+    "paymentMethod": "Direct Bank RTGS Transfer",
+    "paymentStatus": "Paid",
+    "orderStatus": "Delivered",
+    "currentStep": 4,
+    "stepStatus": "delivered",
+    "deliveryAddress": "Bungalow 14, Golf Links, New Delhi 110003",
+    "trackingNumber": "BLUEDART-EXP-77210",
+    "stepTimestamps": {
+      "placed": "01:05 PM, 18 Aug, 2026",
+      "accepted": "02:30 PM, 18 Aug, 2026",
+      "dispatched": "10:00 AM, 19 Aug, 2026",
+      "delivered": "04:15 PM, 20 Aug, 2026"
+    }
+  }
+]

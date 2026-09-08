@@ -1,0 +1,15 @@
+{
+  "name": "kuldeep-singh-backend",
+  "version": "1.0.0",
+  "description": "24/7 Real-Time Backend API & Database for Artist Kuldeep Singh Studio",
+  "main": "server.js",
+  "type": "module",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node server.js"
+  },
+  "dependencies": {
+    "cors": "^2.8.6",
+    "express": "^4.22.2"
+  }
+}
