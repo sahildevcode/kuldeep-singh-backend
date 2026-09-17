@@ -17,12 +17,18 @@ app.use(express.urlencoded({ limit: '50mb', extended: true }));
 const DATA_DIR = path.join(__dirname, 'data');
 const ORDERS_FILE = path.join(DATA_DIR, 'orders.json');
 const ARTWORKS_FILE = path.join(DATA_DIR, 'artworks.json');
+const COURSES_FILE = path.join(DATA_DIR, 'courses.json');
+const STUDENTS_FILE = path.join(DATA_DIR, 'students.json');
+const LIVE_STATUS_FILE = path.join(DATA_DIR, 'live_status.json');
 
 if (!fs.existsSync(DATA_DIR)) {
   fs.mkdirSync(DATA_DIR, { recursive: true });
 }
 
-// Initial sample seed if database is clean
+// -------------------------------------------------------------
+// SEED DATA
+// -------------------------------------------------------------
+
 const INITIAL_SEED_ORDERS = [
   {
     id: 'ORD_00932',
@@ -154,7 +160,7 @@ const INITIAL_SEED_ARTWORKS = [
     medium: 'Watercolor & Ink',
     dimensions: '22 x 30 in (56 x 76 cm)',
     price: 1450,
-    image: 'https://images.unsplash.com/photo-1579783901586-d88db74b4fe4?q=80&w=1400&auto=format&fit=crop',
+    image: 'https://images.unsplash.com/photo-1579783900882-c0d3dad7b119?q=80&w=1400&auto=format&fit=crop',
     description: 'Delicate washes of French ultramarine and warm raw sienna capturing the romantic haze of the Venetian lagoon at 6:00 AM.',
     story: 'Painted en plein air from the steps of Santa Maria della Salute. The spontaneous blooms of watercolor create an ethereal dreamscape.',
     framed: true,
@@ -220,51 +226,240 @@ const INITIAL_SEED_ARTWORKS = [
   }
 ];
 
-// Order Helpers
-function readOrders() {
+const INITIAL_SEED_STUDENTS = [
+  {
+    id: 'stu-101',
+    name: 'Aarav Sharma',
+    email: 'aarav.sharma@gmail.com',
+    phone: '+91 98201 45892',
+    courseId: 'course-oil-mastery',
+    courseTitle: 'The Master Oil Painting Diploma',
+    batchSchedule: 'Saturday & Sunday • 6:00 PM – 8:00 PM IST',
+    enrolledDate: 'Sep 1, 2026',
+    feesPaid: 349,
+    paymentStatus: 'Paid',
+    progressPercent: 68,
+    avatar: 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?q=80&w=150&auto=format&fit=crop'
+  },
+  {
+    id: 'stu-102',
+    name: 'Elena Rostova',
+    email: 'elena.rostova@artacademy.eu',
+    phone: '+44 7700 900077',
+    courseId: 'course-realistic-sketching',
+    courseTitle: 'Foundations of Realistic Sketching & Human Anatomy',
+    batchSchedule: 'Tuesday & Thursday • 7:00 PM – 9:00 PM IST',
+    enrolledDate: 'Sep 3, 2026',
+    feesPaid: 249,
+    paymentStatus: 'Paid',
+    progressPercent: 42,
+    avatar: 'https://images.unsplash.com/photo-1494790108377-be9c29b29330?q=80&w=150&auto=format&fit=crop'
+  },
+  {
+    id: 'stu-103',
+    name: 'Dev Patel',
+    email: 'dev.patel.design@outlook.com',
+    phone: '+91 98112 33455',
+    courseId: 'course-watercolor-fluid',
+    courseTitle: 'Expressive Watercolor & Fluid Pigment Painting',
+    batchSchedule: 'Wednesday & Friday • 6:30 PM – 8:30 PM IST',
+    enrolledDate: 'Aug 28, 2026',
+    feesPaid: 219,
+    paymentStatus: 'Paid',
+    progressPercent: 85,
+    avatar: 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?q=80&w=150&auto=format&fit=crop'
+  },
+  {
+    id: 'stu-104',
+    name: 'Sophia Laurent',
+    email: 'sophia.l@parisart.fr',
+    phone: '+33 6 12 34 56 78',
+    courseId: 'course-oil-mastery',
+    courseTitle: 'The Master Oil Painting Diploma',
+    batchSchedule: 'Saturday & Sunday • 6:00 PM – 8:00 PM IST',
+    enrolledDate: 'Sep 5, 2026',
+    feesPaid: 349,
+    paymentStatus: 'Paid',
+    progressPercent: 20,
+    avatar: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?q=80&w=150&auto=format&fit=crop'
+  }
+];
+
+const INITIAL_SEED_COURSES = [
+  {
+    id: 'course-oil-mastery',
+    title: 'The Master Oil Painting Diploma',
+    subtitle: 'From Blank Belgian Canvas to Classical Realism, Glazes & Expressive Impasto',
+    level: 'All Levels',
+    category: 'Oil Painting',
+    durationHours: 36,
+    durationMonths: '3 Months Intensive Masterclass',
+    schedule: 'Saturday & Sunday • 6:00 PM – 8:00 PM IST (Live Atelier + 4K Recordings)',
+    startDate: 'Next Cohort: 1st of Upcoming Month',
+    mode: 'Live Studio Workshop + 1-on-1 Personal Critique by Kuldeep Singh',
+    certification: 'Master of Classical Oils Certificate signed by Artist Kuldeep Singh',
+    prerequisites: 'No prior oil painting experience needed; passion for classical fine art is required.',
+    totalLessons: 48,
+    price: 349,
+    originalPrice: 499,
+    rating: 4.96,
+    studentsEnrolled: 2480,
+    thumbnail: 'https://images.unsplash.com/photo-1579783900882-c0d3dad7b119?q=80&w=1200&auto=format&fit=crop',
+    summary: 'A 3-month comprehensive diploma covering classical Old Masters glazing, fat-over-lean chemical rules, portrait flesh tones, and bold sculptural impasto.',
+    liveClassStatus: 'offline',
+    liveClassUrl: 'https://meet.google.com/ks-studio-atelier',
+    modules: [
+      {
+        id: 'mod-1',
+        title: 'Month 1: Studio Setup, Pigment Chemistry & Underpainting',
+        duration: '12 Hours (Weeks 1 – 4)',
+        lessonsCount: 4,
+        topics: [
+          'Week 1: Non-toxic studio safety, oils, solvents, and medium recipes',
+          'Week 2: Stretching linen, sizing with rabbit skin glue, and applying oil ground',
+          'Week 3: Sight-size proportions and Imprimatura tonal washes',
+          'Week 4: Grisaille monochrome study — establishing indestructible value structure'
+        ],
+        lectures: [
+          {
+            id: 'lec-oil-1',
+            title: 'Week 1: Non-toxic studio safety, oils, solvents, and medium recipes',
+            duration: '48 Mins',
+            videoUrl: 'https://www.youtube.com/embed/dQw4w9WgXcQ',
+            summary: 'Comprehensive workshop on proper ventilation, cold-pressed linseed oil chemistry, and archival dammar preparations.'
+          },
+          {
+            id: 'lec-oil-2',
+            title: 'Week 2: Stretching linen, sizing with rabbit skin glue, and applying oil ground',
+            duration: '52 Mins',
+            videoUrl: 'https://www.youtube.com/embed/dQw4w9WgXcQ',
+            summary: 'Master practical demonstration on traditional Belgian linen preparation.'
+          },
+          {
+            id: 'lec-oil-3',
+            title: 'Week 3: Sight-size proportions and Imprimatura tonal washes',
+            duration: '45 Mins',
+            videoUrl: 'https://www.youtube.com/embed/dQw4w9WgXcQ',
+            summary: 'Laying down the warm raw umber ground and blocking primary anatomical planes.'
+          },
+          {
+            id: 'lec-oil-4',
+            title: 'Week 4: Grisaille monochrome study — value structure',
+            duration: '60 Mins',
+            videoUrl: 'https://www.youtube.com/embed/dQw4w9WgXcQ',
+            summary: 'Executing a monochrome chiaroscuro study before introducing chromatic glazes.'
+          }
+        ]
+      },
+      {
+        id: 'mod-2',
+        title: 'Month 2: Alla Prima, Heavy Impasto & Color Temperatures',
+        duration: '12 Hours (Weeks 5 – 8)',
+        lessonsCount: 2,
+        topics: [
+          'Week 5: Direct painting speed & spontaneous brush calligraphy',
+          'Week 6: Palette knife sculpting — layering thick mineral paste'
+        ],
+        lectures: [
+          {
+            id: 'lec-oil-5',
+            title: 'Week 5: Direct painting speed & spontaneous brush calligraphy',
+            duration: '50 Mins',
+            videoUrl: 'https://www.youtube.com/embed/dQw4w9WgXcQ',
+            summary: 'Wet-on-wet expressive oil painting techniques.'
+          },
+          {
+            id: 'lec-oil-6',
+            title: 'Week 6: Palette knife sculpting — layering thick mineral paste',
+            duration: '55 Mins',
+            videoUrl: 'https://www.youtube.com/embed/dQw4w9WgXcQ',
+            summary: 'Creating sculpted textural surfaces that catch dimensional light.'
+          }
+        ]
+      }
+    ]
+  },
+  {
+    id: 'course-realistic-sketching',
+    title: 'Foundations of Realistic Sketching & Human Anatomy',
+    subtitle: 'Master Sight-Size Measuring, 5-Value Light & Shadow, Willow Charcoal, and Figure Drawing',
+    level: 'All Levels',
+    category: 'Realistic Sketching',
+    durationHours: 26,
+    durationMonths: '2 Months Comprehensive Foundation',
+    schedule: 'Tuesday & Thursday • 7:00 PM – 9:00 PM IST (Live Step-by-Step Demos)',
+    startDate: 'Next Cohort: 10th of Upcoming Month',
+    mode: 'Live Anatomy Drawing Classes + Weekly Homework Review',
+    certification: 'Academic Draftsmanship Certificate by Artist Kuldeep Singh',
+    prerequisites: 'Open to beginners and self-taught sketchers wanting academic precision.',
+    totalLessons: 36,
+    price: 249,
+    originalPrice: 349,
+    rating: 4.98,
+    studentsEnrolled: 3820,
+    thumbnail: 'https://images.unsplash.com/photo-1544967082-d9d25d867d66?q=80&w=1200&auto=format&fit=crop',
+    summary: 'A 2-month rigorous foundation in seeing like a draftsman. Master graphite pressures, willow charcoal sculpting, human bone landmarks, and photographic realism.',
+    liveClassStatus: 'offline',
+    liveClassUrl: 'https://meet.google.com/ks-studio-atelier',
+    modules: [
+      {
+        id: 'mod-s1',
+        title: 'Month 1: The Draftsman’s Eye, Line Dynamics & Form Lighting',
+        duration: '13 Hours (Weeks 1 – 4)',
+        lessonsCount: 2,
+        topics: ['Week 1: Pencil grip ergonomics', 'Week 2: The 5-Value tonal scale'],
+        lectures: [
+          {
+            id: 'lec-sk-1',
+            title: 'Week 1: Pencil grip ergonomics & fine mechanical control',
+            duration: '42 Mins',
+            videoUrl: 'https://www.youtube.com/embed/dQw4w9WgXcQ',
+            summary: 'Loose gestural arm movement vs wrist precision.'
+          },
+          {
+            id: 'lec-sk-2',
+            title: 'Week 2: The 5-Value tonal scale on geometric solids',
+            duration: '47 Mins',
+            videoUrl: 'https://www.youtube.com/embed/dQw4w9WgXcQ',
+            summary: 'Understanding center light, core shadow, and ambient occlusion.'
+          }
+        ]
+      }
+    ]
+  }
+];
+
+const INITIAL_LIVE_STATUS = {
+  isLive: false,
+  liveStreamUrl: 'https://meet.google.com/ks-studio-atelier',
+  topic: 'Masterclass Live Studio Broadcast • Atelier Demonstration',
+  updatedAt: new Date().toISOString()
+};
+
+// -------------------------------------------------------------
+// READ / WRITE HELPERS
+// -------------------------------------------------------------
+
+function readJsonFile(filePath, defaultData) {
   try {
-    if (!fs.existsSync(ORDERS_FILE)) {
-      fs.writeFileSync(ORDERS_FILE, JSON.stringify(INITIAL_SEED_ORDERS, null, 2), 'utf-8');
-      return INITIAL_SEED_ORDERS;
+    if (!fs.existsSync(filePath)) {
+      fs.writeFileSync(filePath, JSON.stringify(defaultData, null, 2), 'utf-8');
+      return defaultData;
     }
-    const data = fs.readFileSync(ORDERS_FILE, 'utf-8');
+    const data = fs.readFileSync(filePath, 'utf-8');
     const parsed = JSON.parse(data);
-    return Array.isArray(parsed) ? parsed : [];
+    return parsed;
   } catch (err) {
-    console.error('Error reading orders file:', err);
-    return [];
+    console.error(`Error reading ${filePath}:`, err);
+    return defaultData;
   }
 }
 
-function writeOrders(orders) {
+function writeJsonFile(filePath, data) {
   try {
-    fs.writeFileSync(ORDERS_FILE, JSON.stringify(orders, null, 2), 'utf-8');
+    fs.writeFileSync(filePath, JSON.stringify(data, null, 2), 'utf-8');
   } catch (err) {
-    console.error('Error writing orders file:', err);
-  }
-}
-
-// Artwork Helpers
-function readArtworks() {
-  try {
-    if (!fs.existsSync(ARTWORKS_FILE)) {
-      fs.writeFileSync(ARTWORKS_FILE, JSON.stringify(INITIAL_SEED_ARTWORKS, null, 2), 'utf-8');
-      return INITIAL_SEED_ARTWORKS;
-    }
-    const data = fs.readFileSync(ARTWORKS_FILE, 'utf-8');
-    const parsed = JSON.parse(data);
-    return Array.isArray(parsed) && parsed.length > 0 ? parsed : INITIAL_SEED_ARTWORKS;
-  } catch (err) {
-    console.error('Error reading artworks file:', err);
-    return INITIAL_SEED_ARTWORKS;
-  }
-}
-
-function writeArtworks(artworks) {
-  try {
-    fs.writeFileSync(ARTWORKS_FILE, JSON.stringify(artworks, null, 2), 'utf-8');
-  } catch (err) {
-    console.error('Error writing artworks file:', err);
+    console.error(`Error writing ${filePath}:`, err);
   }
 }
 
@@ -288,14 +483,21 @@ function broadcastUpdate(type, payload) {
 
 // Health Check
 app.get('/api/health', (req, res) => {
-  const orders = readOrders();
-  const artworks = readArtworks();
+  const orders = readJsonFile(ORDERS_FILE, INITIAL_SEED_ORDERS);
+  const artworks = readJsonFile(ARTWORKS_FILE, INITIAL_SEED_ARTWORKS);
+  const courses = readJsonFile(COURSES_FILE, INITIAL_SEED_COURSES);
+  const students = readJsonFile(STUDENTS_FILE, INITIAL_SEED_STUDENTS);
+  const liveStatus = readJsonFile(LIVE_STATUS_FILE, INITIAL_LIVE_STATUS);
+
   res.json({
     status: 'ok',
-    service: 'Kuldeep Singh Fine Art Atelier API',
+    service: 'Kuldeep Singh Fine Art Atelier Cloud API',
     timestamp: new Date().toISOString(),
     totalOrders: orders.length,
-    totalArtworks: artworks.length
+    totalArtworks: artworks.length,
+    totalCourses: courses.length,
+    totalStudents: students.length,
+    isLive: liveStatus.isLive
   });
 });
 
@@ -310,7 +512,6 @@ app.get('/api/events', (req, res) => {
   const newClient = { id: clientId, res };
   sseClients.push(newClient);
 
-  // Send initial ping
   res.write(`data: ${JSON.stringify({ type: 'CONNECTED', timestamp: Date.now() })}\n\n`);
 
   req.on('close', () => {
@@ -319,29 +520,171 @@ app.get('/api/events', (req, res) => {
 });
 
 // ==========================================
-// ARTWORKS ENDPOINTS
+// 1. LIVE STUDIO BROADCAST API
 // ==========================================
 
-// GET all artworks
+app.get('/api/live', (req, res) => {
+  const liveStatus = readJsonFile(LIVE_STATUS_FILE, INITIAL_LIVE_STATUS);
+  res.json(liveStatus);
+});
+
+app.post('/api/live', (req, res) => {
+  const current = readJsonFile(LIVE_STATUS_FILE, INITIAL_LIVE_STATUS);
+  const updated = {
+    ...current,
+    ...req.body,
+    updatedAt: new Date().toISOString()
+  };
+  writeJsonFile(LIVE_STATUS_FILE, updated);
+
+  // Also update courses[0] liveClassStatus
+  const courses = readJsonFile(COURSES_FILE, INITIAL_SEED_COURSES);
+  if (courses.length > 0) {
+    courses[0].liveClassStatus = updated.isLive ? 'live' : 'offline';
+    if (updated.liveStreamUrl) {
+      courses[0].liveClassUrl = updated.liveStreamUrl;
+    }
+    writeJsonFile(COURSES_FILE, courses);
+  }
+
+  broadcastUpdate('LIVE_STATUS_CHANGED', updated);
+  console.log(`[BACKEND] Live Broadcast Status Changed: ${updated.isLive ? '🔴 LIVE' : '⚪ OFFLINE'} - URL: ${updated.liveStreamUrl}`);
+  res.json({ success: true, liveStatus: updated });
+});
+
+// ==========================================
+// 2. COURSES & LECTURES API (200GB Video / Stream Ready)
+// ==========================================
+
+app.get('/api/courses', (req, res) => {
+  const courses = readJsonFile(COURSES_FILE, INITIAL_SEED_COURSES);
+  res.json(courses);
+});
+
+app.get('/api/courses/:id', (req, res) => {
+  const courses = readJsonFile(COURSES_FILE, INITIAL_SEED_COURSES);
+  const course = courses.find((c) => c.id === req.params.id);
+  if (!course) return res.status(404).json({ error: 'Course not found' });
+  res.json(course);
+});
+
+// Add / Upload New Lecture into Course Module
+app.post('/api/courses/:id/modules/:moduleIndex/lectures', (req, res) => {
+  const courses = readJsonFile(COURSES_FILE, INITIAL_SEED_COURSES);
+  const course = courses.find((c) => c.id === req.params.id);
+  if (!course) return res.status(404).json({ error: 'Course not found' });
+
+  const modIdx = parseInt(req.params.moduleIndex, 10);
+  if (!course.modules || !course.modules[modIdx]) {
+    return res.status(404).json({ error: 'Module not found' });
+  }
+
+  const newLecture = {
+    id: req.body.id || `lec-${Date.now()}`,
+    title: req.body.title || 'Untitled Master Lecture',
+    duration: req.body.duration || '45 Mins',
+    videoUrl: req.body.videoUrl || 'https://www.youtube.com/embed/dQw4w9WgXcQ',
+    summary: req.body.summary || 'Master practical demonstration by Artist Kuldeep Singh.'
+  };
+
+  if (!course.modules[modIdx].lectures) {
+    course.modules[modIdx].lectures = [];
+  }
+
+  course.modules[modIdx].lectures.push(newLecture);
+  course.modules[modIdx].lessonsCount = course.modules[modIdx].lectures.length;
+
+  writeJsonFile(COURSES_FILE, courses);
+  broadcastUpdate('LECTURE_ADDED', { courseId: course.id, moduleIndex: modIdx, lecture: newLecture });
+
+  console.log(`[BACKEND] New Lecture Added to "${course.title}": "${newLecture.title}"`);
+  res.status(201).json({ success: true, lecture: newLecture, course });
+});
+
+// Update Course
+app.put('/api/courses/:id', (req, res) => {
+  const courses = readJsonFile(COURSES_FILE, INITIAL_SEED_COURSES);
+  const idx = courses.findIndex((c) => c.id === req.params.id);
+  if (idx === -1) return res.status(404).json({ error: 'Course not found' });
+
+  courses[idx] = { ...courses[idx], ...req.body, id: courses[idx].id };
+  writeJsonFile(COURSES_FILE, courses);
+  broadcastUpdate('COURSE_UPDATED', courses[idx]);
+  res.json({ success: true, course: courses[idx] });
+});
+
+// ==========================================
+// 3. STUDENTS & ENROLLMENTS API
+// ==========================================
+
+app.get('/api/students', (req, res) => {
+  const students = readJsonFile(STUDENTS_FILE, INITIAL_SEED_STUDENTS);
+  res.json(students);
+});
+
+app.post('/api/students', (req, res) => {
+  const students = readJsonFile(STUDENTS_FILE, INITIAL_SEED_STUDENTS);
+  const newStudent = {
+    id: req.body.id || `stu-${Date.now()}`,
+    name: req.body.name || 'Student Artist',
+    email: req.body.email || 'student@kuldeepsingh.art',
+    phone: req.body.phone || '',
+    courseId: req.body.courseId || 'course-oil-mastery',
+    courseTitle: req.body.courseTitle || 'The Master Oil Painting Diploma',
+    batchSchedule: req.body.batchSchedule || 'Saturday & Sunday • 6:00 PM – 8:00 PM IST',
+    enrolledDate: req.body.enrolledDate || new Date().toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }),
+    feesPaid: Number(req.body.feesPaid) || 349,
+    paymentStatus: req.body.paymentStatus || 'Paid',
+    progressPercent: Number(req.body.progressPercent) || 0,
+    avatar: req.body.avatar || 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?q=80&w=150&auto=format&fit=crop'
+  };
+
+  students.unshift(newStudent);
+  writeJsonFile(STUDENTS_FILE, students);
+  broadcastUpdate('STUDENT_ENROLLED', newStudent);
+
+  console.log(`[BACKEND] New Student Enrolled: ${newStudent.name} (${newStudent.courseTitle})`);
+  res.status(201).json({ success: true, student: newStudent });
+});
+
+app.put('/api/students/:id', (req, res) => {
+  const students = readJsonFile(STUDENTS_FILE, INITIAL_SEED_STUDENTS);
+  const idx = students.findIndex((s) => s.id === req.params.id);
+  if (idx === -1) return res.status(404).json({ error: 'Student not found' });
+
+  students[idx] = { ...students[idx], ...req.body, id: students[idx].id };
+  writeJsonFile(STUDENTS_FILE, students);
+  broadcastUpdate('STUDENT_UPDATED', students[idx]);
+  res.json({ success: true, student: students[idx] });
+});
+
+app.delete('/api/students/:id', (req, res) => {
+  const students = readJsonFile(STUDENTS_FILE, INITIAL_SEED_STUDENTS);
+  const filtered = students.filter((s) => s.id !== req.params.id);
+  writeJsonFile(STUDENTS_FILE, filtered);
+  broadcastUpdate('STUDENT_DELETED', { id: req.params.id });
+  res.json({ success: true, id: req.params.id });
+});
+
+// ==========================================
+// 4. ARTWORKS API
+// ==========================================
+
 app.get('/api/artworks', (req, res) => {
-  const artworks = readArtworks();
+  const artworks = readJsonFile(ARTWORKS_FILE, INITIAL_SEED_ARTWORKS);
   res.json(artworks);
 });
 
-// GET single artwork by ID
 app.get('/api/artworks/:id', (req, res) => {
-  const artworks = readArtworks();
+  const artworks = readJsonFile(ARTWORKS_FILE, INITIAL_SEED_ARTWORKS);
   const item = artworks.find((a) => a.id === req.params.id);
-  if (!item) {
-    return res.status(404).json({ error: 'Artwork not found' });
-  }
+  if (!item) return res.status(404).json({ error: 'Artwork not found' });
   res.json(item);
 });
 
-// POST create new artwork
 app.post('/api/artworks', (req, res) => {
   const body = req.body;
-  const artworks = readArtworks();
+  const artworks = readJsonFile(ARTWORKS_FILE, INITIAL_SEED_ARTWORKS);
 
   const newArtwork = {
     id: body.id || `art-${Date.now()}`,
@@ -364,79 +707,51 @@ app.post('/api/artworks', (req, res) => {
   };
 
   artworks.unshift(newArtwork);
-  writeArtworks(artworks);
-
+  writeJsonFile(ARTWORKS_FILE, artworks);
   broadcastUpdate('ARTWORK_CREATED', newArtwork);
 
   console.log(`[BACKEND] New Artwork Added: "${newArtwork.title}" (#${newArtwork.id}) - ₹${newArtwork.price}`);
   res.status(201).json({ success: true, artwork: newArtwork });
 });
 
-// PUT update artwork
 app.put('/api/artworks/:id', (req, res) => {
-  const artworks = readArtworks();
+  const artworks = readJsonFile(ARTWORKS_FILE, INITIAL_SEED_ARTWORKS);
   const idx = artworks.findIndex((a) => a.id === req.params.id);
+  if (idx === -1) return res.status(404).json({ error: 'Artwork not found' });
 
-  if (idx === -1) {
-    return res.status(404).json({ error: 'Artwork not found' });
-  }
-
-  const existing = artworks[idx];
-  const updated = {
-    ...existing,
-    ...req.body,
-    id: existing.id // preserve ID
-  };
-
-  artworks[idx] = updated;
-  writeArtworks(artworks);
-
-  broadcastUpdate('ARTWORK_UPDATED', updated);
-
-  console.log(`[BACKEND] Artwork Updated: "${updated.title}" (#${updated.id})`);
-  res.json({ success: true, artwork: updated });
+  artworks[idx] = { ...artworks[idx], ...req.body, id: artworks[idx].id };
+  writeJsonFile(ARTWORKS_FILE, artworks);
+  broadcastUpdate('ARTWORK_UPDATED', artworks[idx]);
+  res.json({ success: true, artwork: artworks[idx] });
 });
 
-// DELETE single artwork
 app.delete('/api/artworks/:id', (req, res) => {
-  const artworks = readArtworks();
+  const artworks = readJsonFile(ARTWORKS_FILE, INITIAL_SEED_ARTWORKS);
   const filtered = artworks.filter((a) => a.id !== req.params.id);
-
-  if (filtered.length === artworks.length) {
-    return res.status(404).json({ error: 'Artwork not found' });
-  }
-
-  writeArtworks(filtered);
+  writeJsonFile(ARTWORKS_FILE, filtered);
   broadcastUpdate('ARTWORK_DELETED', { id: req.params.id });
-
-  console.log(`[BACKEND] Artwork Deleted: #${req.params.id}`);
   res.json({ success: true, id: req.params.id });
 });
 
 // ==========================================
-// ORDERS ENDPOINTS
+// 5. ORDERS API
 // ==========================================
 
-// GET all orders
 app.get('/api/orders', (req, res) => {
-  const orders = readOrders();
+  const orders = readJsonFile(ORDERS_FILE, INITIAL_SEED_ORDERS);
   res.json(orders);
 });
 
-// GET single order by ID
 app.get('/api/orders/:id', (req, res) => {
-  const orders = readOrders();
+  const orders = readJsonFile(ORDERS_FILE, INITIAL_SEED_ORDERS);
   const order = orders.find((o) => o.id === req.params.id);
-  if (!order) {
-    return res.status(404).json({ error: 'Order not found' });
-  }
+  if (!order) return res.status(404).json({ error: 'Order not found' });
   res.json(order);
 });
 
-// POST create new order
 app.post('/api/orders', (req, res) => {
   const body = req.body;
-  const orders = readOrders();
+  const orders = readJsonFile(ORDERS_FILE, INITIAL_SEED_ORDERS);
 
   const generatedId = body.id || ('ORD_' + Math.floor(10000 + Math.random() * 90000));
   const now = new Date();
@@ -474,68 +789,42 @@ app.post('/api/orders', (req, res) => {
   };
 
   orders.unshift(newOrder);
-  writeOrders(orders);
-
+  writeJsonFile(ORDERS_FILE, orders);
   broadcastUpdate('ORDER_CREATED', newOrder);
 
   console.log(`[BACKEND] New Order Placed: #${newOrder.id} - ${newOrder.customerName} - ₹${newOrder.totalAmount}`);
   res.status(201).json({ success: true, order: newOrder });
 });
 
-// PUT update order
 app.put('/api/orders/:id', (req, res) => {
-  const orders = readOrders();
+  const orders = readJsonFile(ORDERS_FILE, INITIAL_SEED_ORDERS);
   const idx = orders.findIndex((o) => o.id === req.params.id);
+  if (idx === -1) return res.status(404).json({ error: 'Order not found' });
 
-  if (idx === -1) {
-    return res.status(404).json({ error: 'Order not found' });
-  }
-
-  const existing = orders[idx];
-  const updated = {
-    ...existing,
-    ...req.body,
-    id: existing.id // preserve ID
-  };
-
-  orders[idx] = updated;
-  writeOrders(orders);
-
-  broadcastUpdate('ORDER_UPDATED', updated);
-
-  console.log(`[BACKEND] Order Updated: #${updated.id} - Step: ${updated.currentStep} (${updated.stepStatus})`);
-  res.json({ success: true, order: updated });
+  orders[idx] = { ...orders[idx], ...req.body, id: orders[idx].id };
+  writeJsonFile(ORDERS_FILE, orders);
+  broadcastUpdate('ORDER_UPDATED', orders[idx]);
+  res.json({ success: true, order: orders[idx] });
 });
 
-// DELETE single order
 app.delete('/api/orders/:id', (req, res) => {
-  const orders = readOrders();
+  const orders = readJsonFile(ORDERS_FILE, INITIAL_SEED_ORDERS);
   const filtered = orders.filter((o) => o.id !== req.params.id);
-
-  if (filtered.length === orders.length) {
-    return res.status(404).json({ error: 'Order not found' });
-  }
-
-  writeOrders(filtered);
+  writeJsonFile(ORDERS_FILE, filtered);
   broadcastUpdate('ORDER_DELETED', { id: req.params.id });
-
-  console.log(`[BACKEND] Order Deleted: #${req.params.id}`);
   res.json({ success: true, id: req.params.id });
 });
 
-// DELETE all orders
 app.delete('/api/orders', (req, res) => {
-  writeOrders([]);
+  writeJsonFile(ORDERS_FILE, []);
   broadcastUpdate('ORDERS_CLEARED', {});
-  console.log(`[BACKEND] All Orders Cleared`);
   res.json({ success: true, message: 'All orders cleared' });
 });
 
 app.listen(PORT, '0.0.0.0', () => {
   console.log(`====================================================`);
-  console.log(`🎨 Artist Kuldeep Singh 24/7 Backend API & DB Online!`);
+  console.log(`🎨 Artist Kuldeep Singh 24/7 Complete Cloud API Online!`);
   console.log(`🚀 Port: http://localhost:${PORT}`);
-  console.log(`📦 Database Orders: ${ORDERS_FILE}`);
-  console.log(`🖼️ Database Artworks: ${ARTWORKS_FILE}`);
+  console.log(`📦 Database: ${DATA_DIR}`);
   console.log(`====================================================`);
 });
