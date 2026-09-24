@@ -601,6 +601,65 @@ app.post('/api/courses/:id/modules/:moduleIndex/lectures', (req, res) => {
   res.status(201).json({ success: true, lecture: newLecture, course });
 });
 
+// Create New Course / Live Batch
+app.post('/api/courses', (req, res) => {
+  const courses = readJsonFile(COURSES_FILE, INITIAL_SEED_COURSES);
+  const newCourse = {
+    id: req.body.id || `course-${Date.now()}`,
+    title: req.body.title || 'Untitled Masterclass Live Batch',
+    subtitle: req.body.subtitle || 'Direct Atelier Mentorship Batch',
+    level: req.body.level || 'All Levels',
+    category: req.body.category || 'Oil Painting',
+    durationHours: Number(req.body.durationHours) || 40,
+    durationMonths: req.body.durationMonths || '1 Month',
+    schedule: req.body.schedule || 'Saturday & Sunday • 6:00 PM – 8:00 PM IST',
+    startDate: req.body.startDate || '22 Oct, 2026',
+    mode: req.body.mode || 'Live Atelier Stream + Recorded Archives',
+    certification: req.body.certification || 'Kuldeep Singh Fine Art Master Diploma',
+    totalLessons: Number(req.body.totalLessons) || 12,
+    price: Number(req.body.price) || 9999,
+    originalPrice: Number(req.body.originalPrice) || 14999,
+    rating: 5.0,
+    studentsEnrolled: 0,
+    thumbnail: req.body.thumbnail || 'https://images.unsplash.com/photo-1579783900882-c0d3dad7b119?q=80&w=1400&auto=format&fit=crop',
+    summary: req.body.summary || 'Live interactive masterclass with Artist Kuldeep Singh.',
+    description: req.body.description || req.body.summary || '',
+    whatYouWillLearn: req.body.whatYouWillLearn || ['Live Demonstration', 'Sight-Size Drawing', 'Master Glazing'],
+    materialsNeeded: req.body.materialsNeeded || ['Palette knives', 'Linseed oil', 'Artist grade pigments'],
+    modules: req.body.modules || [
+      {
+        id: `mod-${Date.now()}-1`,
+        title: 'Module 1: Foundations & Live Orientation',
+        duration: '2 Weeks',
+        lessonsCount: 0,
+        topics: ['Introduction to Mediums & Palette Setup', 'Live Demonstration'],
+        lectures: []
+      }
+    ],
+    liveClassUrl: req.body.liveClassUrl || 'https://meet.google.com/ks-studio-atelier',
+    liveClassStatus: req.body.liveClassStatus || 'offline',
+    ...req.body
+  };
+
+  courses.unshift(newCourse);
+  writeJsonFile(COURSES_FILE, courses);
+  broadcastUpdate('COURSE_ADDED', newCourse);
+  console.log(`[BACKEND] New Course / Live Batch Created: "${newCourse.title}" (Starts: ${newCourse.startDate})`);
+  res.status(201).json({ success: true, course: newCourse });
+});
+
+// Delete Course / Live Batch
+app.delete('/api/courses/:id', (req, res) => {
+  const courses = readJsonFile(COURSES_FILE, INITIAL_SEED_COURSES);
+  const filtered = courses.filter((c) => c.id !== req.params.id);
+  if (filtered.length === courses.length) {
+    return res.status(404).json({ error: 'Course not found' });
+  }
+  writeJsonFile(COURSES_FILE, filtered);
+  broadcastUpdate('COURSE_DELETED', { id: req.params.id });
+  res.json({ success: true, message: `Course ${req.params.id} deleted` });
+});
+
 // Update Course
 app.put('/api/courses/:id', (req, res) => {
   const courses = readJsonFile(COURSES_FILE, INITIAL_SEED_COURSES);
