@@ -601,6 +601,31 @@ app.post('/api/courses/:id/modules/:moduleIndex/lectures', (req, res) => {
   res.status(201).json({ success: true, lecture: newLecture, course });
 });
 
+// Delete Lecture from Course Module
+app.delete('/api/courses/:id/modules/:moduleIndex/lectures/:lectureIndex', (req, res) => {
+  const courses = readJsonFile(COURSES_FILE, INITIAL_SEED_COURSES);
+  const course = courses.find((c) => c.id === req.params.id);
+  if (!course) return res.status(404).json({ error: 'Course not found' });
+
+  const modIdx = parseInt(req.params.moduleIndex, 10);
+  if (!course.modules || !course.modules[modIdx]) {
+    return res.status(404).json({ error: 'Module not found' });
+  }
+
+  const lecIdx = parseInt(req.params.lectureIndex, 10);
+  if (course.modules[modIdx].lectures) {
+    course.modules[modIdx].lectures = course.modules[modIdx].lectures.filter((_, idx) => idx !== lecIdx);
+    course.modules[modIdx].lessonsCount = course.modules[modIdx].lectures.length;
+    course.modules[modIdx].topics = course.modules[modIdx].lectures.map((l) => l.title);
+  }
+  const total = course.modules.reduce((acc, m) => acc + (m.lectures ? m.lectures.length : m.lessonsCount), 0);
+  course.totalLessons = total;
+
+  writeJsonFile(COURSES_FILE, courses);
+  broadcastUpdate('LECTURE_DELETED', { courseId: course.id, moduleIndex: modIdx, lectureIndex: lecIdx });
+  res.json({ success: true, course });
+});
+
 // Create New Course / Live Batch
 app.post('/api/courses', (req, res) => {
   const courses = readJsonFile(COURSES_FILE, INITIAL_SEED_COURSES);
@@ -632,7 +657,7 @@ app.post('/api/courses', (req, res) => {
         title: 'Module 1: Foundations & Live Orientation',
         duration: '2 Weeks',
         lessonsCount: 0,
-        topics: ['Introduction to Mediums & Palette Setup', 'Live Demonstration'],
+        topics: [],
         lectures: []
       }
     ],
@@ -697,6 +722,15 @@ app.post('/api/students', (req, res) => {
     progressPercent: Number(req.body.progressPercent) || 0,
     avatar: req.body.avatar || 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?q=80&w=150&auto=format&fit=crop'
   };
+
+  const existingIdx = students.findIndex(
+    (s) => s.email.toLowerCase() === newStudent.email.toLowerCase() && s.courseId === newStudent.courseId
+  );
+  if (existingIdx !== -1) {
+    students[existingIdx] = { ...students[existingIdx], ...newStudent, id: students[existingIdx].id };
+    writeJsonFile(STUDENTS_FILE, students);
+    return res.status(200).json({ success: true, student: students[existingIdx] });
+  }
 
   students.unshift(newStudent);
   writeJsonFile(STUDENTS_FILE, students);
