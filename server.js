@@ -1,14 +1,23 @@
+import 'dotenv/config';
 import express from 'express';
 import cors from 'cors';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import dns from 'dns';
+import mongoose from 'mongoose';
+import crypto from 'crypto';
+import Razorpay from 'razorpay';
+
+// Force public DNS resolution to prevent local ISP SRV resolution issues
+dns.setServers(['8.8.8.8', '1.1.1.1']);
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const app = express();
 const PORT = process.env.PORT || 5000;
+const MONGODB_URI = process.env.MONGODB_URI || 'mongodb+srv://sahilytzxx_db_user:m4J2c1FkGupWeQVa@cluster0.xr4tur3.mongodb.net/kuldeep_studio?retryWrites=true&w=majority&appName=Cluster0';
 
 app.use(cors({ origin: '*' }));
 app.use(express.json({ limit: '50mb' }));
@@ -20,6 +29,7 @@ const ARTWORKS_FILE = path.join(DATA_DIR, 'artworks.json');
 const COURSES_FILE = path.join(DATA_DIR, 'courses.json');
 const STUDENTS_FILE = path.join(DATA_DIR, 'students.json');
 const LIVE_STATUS_FILE = path.join(DATA_DIR, 'live_status.json');
+const PROFILE_FILE = path.join(DATA_DIR, 'profile.json');
 
 if (!fs.existsSync(DATA_DIR)) {
   fs.mkdirSync(DATA_DIR, { recursive: true });
@@ -63,6 +73,8 @@ const INITIAL_SEED_ORDERS = [
     stepStatus: 'delivered',
     deliveryAddress: 'Bungalow 14, Golf Links, New Delhi 110003',
     trackingNumber: 'BLUEDART-EXP-77210',
+    carrierName: 'BlueDart Express',
+    notes: 'Fragile archival fine art crating',
     stepTimestamps: {
       placed: '01:05 PM, 18 Aug, 2026',
       accepted: '02:30 PM, 18 Aug, 2026',
@@ -436,8 +448,22 @@ const INITIAL_LIVE_STATUS = {
   updatedAt: new Date().toISOString()
 };
 
+const INITIAL_ARTIST_PROFILE = {
+  id: 'primary_profile',
+  name: 'Kuldeep Singh',
+  title: 'Master Classical Realist & Atelier Founder',
+  studioVideoUrl: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4',
+  studioVideoTitle: 'Artist Kuldeep Singh • Master Oil Painting in Atelier',
+  studioVideoPoster: 'https://images.unsplash.com/photo-1579783900882-c0d3dad7b119?q=80&w=1200&auto=format&fit=crop',
+  bio: 'Dedicated to the timeless traditions of European academic realism, anatomical draftsmanship, and fine art mastery.',
+  yearsOfExperience: 18,
+  exhibitionsCount: 24,
+  privateCollectorsCount: 350,
+  awardsCount: 12
+};
+
 // -------------------------------------------------------------
-// READ / WRITE HELPERS
+// READ / WRITE FILE HELPERS (Resilient Fallback & Local Backup)
 // -------------------------------------------------------------
 
 function readJsonFile(filePath, defaultData) {
@@ -463,6 +489,195 @@ function writeJsonFile(filePath, data) {
   }
 }
 
+// -------------------------------------------------------------
+// MONGOOSE SCHEMAS & MODELS (Flexible Schema - Preserves All Fields)
+// -------------------------------------------------------------
+
+const OrderSchema = new mongoose.Schema({
+  id: { type: String, unique: true, required: true },
+  customerName: String,
+  customerEmail: String,
+  customerPhone: String,
+  customerCity: String,
+  customerState: String,
+  deliveryAddress: String,
+  paymentMethod: String,
+  paymentStatus: String,
+  orderStatus: String,
+  date: String,
+  orderTime: String,
+  orderMonth: String,
+  items: Array,
+  subtotal: Number,
+  discount: Number,
+  shipping: Number,
+  totalAmount: Number,
+  currentStep: Number,
+  stepStatus: String,
+  trackingNumber: String,
+  carrierName: String,
+  notes: String,
+  stepTimestamps: Object
+}, { timestamps: true, strict: false });
+
+const ArtworkSchema = new mongoose.Schema({
+  id: { type: String, unique: true, required: true },
+  title: String,
+  subtitle: String,
+  year: Number,
+  medium: String,
+  dimensions: String,
+  price: Number,
+  image: String,
+  detailImages: Array,
+  description: String,
+  story: String,
+  framed: Boolean,
+  status: String,
+  featured: Boolean,
+  paletteColors: Array,
+  weight: String,
+  varnishType: String
+}, { timestamps: true, strict: false });
+
+const CourseSchema = new mongoose.Schema({
+  id: { type: String, unique: true, required: true },
+  title: String,
+  subtitle: String,
+  level: String,
+  category: String,
+  durationHours: Number,
+  durationMonths: String,
+  schedule: String,
+  startDate: String,
+  mode: String,
+  certification: String,
+  totalLessons: Number,
+  price: Number,
+  originalPrice: Number,
+  rating: Number,
+  studentsEnrolled: Number,
+  thumbnail: String,
+  summary: String,
+  description: String,
+  whatYouWillLearn: Array,
+  materialsNeeded: Array,
+  modules: Array,
+  liveClassUrl: String,
+  liveClassStatus: String
+}, { timestamps: true, strict: false });
+
+const StudentSchema = new mongoose.Schema({
+  id: { type: String, unique: true, required: true },
+  name: String,
+  email: String,
+  phone: String,
+  courseId: String,
+  courseTitle: String,
+  batchSchedule: String,
+  enrolledDate: String,
+  feesPaid: Number,
+  paymentStatus: String,
+  progressPercent: Number,
+  avatar: String
+}, { timestamps: true, strict: false });
+
+const LiveStatusSchema = new mongoose.Schema({
+  isLive: Boolean,
+  liveStreamUrl: String,
+  topic: String,
+  updatedAt: String
+}, { timestamps: true, strict: false });
+
+const ProfileSchema = new mongoose.Schema({
+  id: { type: String, default: 'primary_profile', unique: true },
+  name: String,
+  title: String,
+  studioVideoUrl: String,
+  studioVideoTitle: String,
+  studioVideoPoster: String,
+  bio: String,
+  yearsOfExperience: Number,
+  exhibitionsCount: Number,
+  privateCollectorsCount: Number,
+  awardsCount: Number
+}, { timestamps: true, strict: false });
+
+const OrderModel = mongoose.model('Order', OrderSchema);
+const ArtworkModel = mongoose.model('Artwork', ArtworkSchema);
+const CourseModel = mongoose.model('Course', CourseSchema);
+const StudentModel = mongoose.model('Student', StudentSchema);
+const LiveStatusModel = mongoose.model('LiveStatus', LiveStatusSchema);
+const ProfileModel = mongoose.model('Profile', ProfileSchema);
+
+let isMongoConnected = false;
+
+async function initMongoDB() {
+  try {
+    console.log('[BACKEND] Connecting to MongoDB Atlas...');
+    await mongoose.connect(MONGODB_URI, { serverSelectionTimeoutMS: 10000 });
+    isMongoConnected = true;
+    console.log('✅ [BACKEND] MongoDB Atlas Cloud Database connected successfully!');
+
+    // Auto-seed Artworks if collection is empty
+    const artCount = await ArtworkModel.countDocuments();
+    if (artCount === 0) {
+      const existingArt = readJsonFile(ARTWORKS_FILE, INITIAL_SEED_ARTWORKS);
+      await ArtworkModel.insertMany(existingArt);
+      console.log(`[BACKEND] Seeded ${existingArt.length} artworks into MongoDB Atlas`);
+    }
+
+    // Auto-seed Courses if collection is empty
+    const courseCount = await CourseModel.countDocuments();
+    if (courseCount === 0) {
+      const existingCourses = readJsonFile(COURSES_FILE, INITIAL_SEED_COURSES);
+      await CourseModel.insertMany(existingCourses);
+      console.log(`[BACKEND] Seeded ${existingCourses.length} courses into MongoDB Atlas`);
+    }
+
+    // Auto-seed Students if collection is empty
+    const studentCount = await StudentModel.countDocuments();
+    if (studentCount === 0) {
+      const existingStudents = readJsonFile(STUDENTS_FILE, INITIAL_SEED_STUDENTS);
+      if (existingStudents.length > 0) {
+        await StudentModel.insertMany(existingStudents);
+        console.log(`[BACKEND] Seeded ${existingStudents.length} students into MongoDB Atlas`);
+      }
+    }
+
+    // Auto-seed Orders if collection is empty
+    const orderCount = await OrderModel.countDocuments();
+    if (orderCount === 0) {
+      const existingOrders = readJsonFile(ORDERS_FILE, INITIAL_SEED_ORDERS);
+      if (existingOrders.length > 0) {
+        await OrderModel.insertMany(existingOrders);
+        console.log(`[BACKEND] Seeded ${existingOrders.length} orders into MongoDB Atlas`);
+      }
+    }
+
+    // Auto-seed LiveStatus if collection is empty
+    const liveCount = await LiveStatusModel.countDocuments();
+    if (liveCount === 0) {
+      const existingLive = readJsonFile(LIVE_STATUS_FILE, INITIAL_LIVE_STATUS);
+      await LiveStatusModel.create(existingLive);
+    }
+
+    // Auto-seed Profile if collection is empty
+    const profileCount = await ProfileModel.countDocuments();
+    if (profileCount === 0) {
+      const existingProfile = readJsonFile(PROFILE_FILE, INITIAL_ARTIST_PROFILE);
+      await ProfileModel.create(existingProfile);
+      console.log('[BACKEND] Seeded Artist Profile into MongoDB Atlas');
+    }
+  } catch (err) {
+    isMongoConnected = false;
+    console.warn('⚠️ [BACKEND] MongoDB Atlas connection warning:', err.message);
+    console.warn('⚠️ [BACKEND] Server is running in resilient local JSON mode.');
+  }
+}
+
+initMongoDB();
+
 // SSE Clients for Live Push Notifications
 let sseClients = [];
 
@@ -482,22 +697,47 @@ function broadcastUpdate(type, payload) {
 // -------------------------------------------------------------
 
 // Health Check
-app.get('/api/health', (req, res) => {
-  const orders = readJsonFile(ORDERS_FILE, INITIAL_SEED_ORDERS);
-  const artworks = readJsonFile(ARTWORKS_FILE, INITIAL_SEED_ARTWORKS);
-  const courses = readJsonFile(COURSES_FILE, INITIAL_SEED_COURSES);
-  const students = readJsonFile(STUDENTS_FILE, INITIAL_SEED_STUDENTS);
-  const liveStatus = readJsonFile(LIVE_STATUS_FILE, INITIAL_LIVE_STATUS);
+app.get('/api/health', async (req, res) => {
+  let orderCount = 0;
+  let artCount = 0;
+  let courseCount = 0;
+  let studentCount = 0;
+  let isLive = false;
+
+  try {
+    if (mongoose.connection.readyState === 1) {
+      orderCount = await OrderModel.countDocuments();
+      artCount = await ArtworkModel.countDocuments();
+      courseCount = await CourseModel.countDocuments();
+      studentCount = await StudentModel.countDocuments();
+      const live = await LiveStatusModel.findOne().lean();
+      isLive = live ? live.isLive : false;
+    } else {
+      const orders = readJsonFile(ORDERS_FILE, INITIAL_SEED_ORDERS);
+      const artworks = readJsonFile(ARTWORKS_FILE, INITIAL_SEED_ARTWORKS);
+      const courses = readJsonFile(COURSES_FILE, INITIAL_SEED_COURSES);
+      const students = readJsonFile(STUDENTS_FILE, INITIAL_SEED_STUDENTS);
+      const liveStatus = readJsonFile(LIVE_STATUS_FILE, INITIAL_LIVE_STATUS);
+      orderCount = orders.length;
+      artCount = artworks.length;
+      courseCount = courses.length;
+      studentCount = students.length;
+      isLive = liveStatus.isLive;
+    }
+  } catch (err) {
+    console.error('Health check count error:', err);
+  }
 
   res.json({
     status: 'ok',
     service: 'Kuldeep Singh Fine Art Atelier Cloud API',
+    database: mongoose.connection.readyState === 1 ? 'MongoDB Atlas (Connected)' : 'Local File Backup Mode',
     timestamp: new Date().toISOString(),
-    totalOrders: orders.length,
-    totalArtworks: artworks.length,
-    totalCourses: courses.length,
-    totalStudents: students.length,
-    isLive: liveStatus.isLive
+    totalOrders: orderCount,
+    totalArtworks: artCount,
+    totalCourses: courseCount,
+    totalStudents: studentCount,
+    isLive: isLive
   });
 });
 
@@ -523,21 +763,59 @@ app.get('/api/events', (req, res) => {
 // 1. LIVE STUDIO BROADCAST API
 // ==========================================
 
-app.get('/api/live', (req, res) => {
+app.get('/api/live', async (req, res) => {
+  try {
+    if (mongoose.connection.readyState === 1) {
+      const status = await LiveStatusModel.findOne().lean();
+      if (status) return res.json(status);
+    }
+  } catch (e) {
+    console.error('Mongo live get error:', e);
+  }
   const liveStatus = readJsonFile(LIVE_STATUS_FILE, INITIAL_LIVE_STATUS);
   res.json(liveStatus);
 });
 
-app.post('/api/live', (req, res) => {
-  const current = readJsonFile(LIVE_STATUS_FILE, INITIAL_LIVE_STATUS);
-  const updated = {
-    ...current,
-    ...req.body,
-    updatedAt: new Date().toISOString()
-  };
+app.post('/api/live', async (req, res) => {
+  let updated;
+  try {
+    if (mongoose.connection.readyState === 1) {
+      const current = await LiveStatusModel.findOne().lean() || INITIAL_LIVE_STATUS;
+      updated = {
+        ...current,
+        ...req.body,
+        updatedAt: new Date().toISOString()
+      };
+      await LiveStatusModel.findOneAndUpdate({}, updated, { upsert: true, new: true });
+    }
+  } catch (e) {
+    console.error('Mongo live post error:', e);
+  }
+
+  if (!updated) {
+    const current = readJsonFile(LIVE_STATUS_FILE, INITIAL_LIVE_STATUS);
+    updated = {
+      ...current,
+      ...req.body,
+      updatedAt: new Date().toISOString()
+    };
+  }
+
   writeJsonFile(LIVE_STATUS_FILE, updated);
 
-  // Also update courses[0] liveClassStatus
+  // Update courses[0] liveClassStatus
+  try {
+    if (mongoose.connection.readyState === 1) {
+      await CourseModel.updateOne(
+        {},
+        {
+          liveClassStatus: updated.isLive ? 'live' : 'offline',
+          ...(updated.liveStreamUrl ? { liveClassUrl: updated.liveStreamUrl } : {})
+        }
+      );
+    }
+  } catch (e) {}
+
   const courses = readJsonFile(COURSES_FILE, INITIAL_SEED_COURSES);
   if (courses.length > 0) {
     courses[0].liveClassStatus = updated.isLive ? 'live' : 'offline';
@@ -553,15 +831,31 @@ app.post('/api/live', (req, res) => {
 });
 
 // ==========================================
-// 2. COURSES & LECTURES API (200GB Video / Stream Ready)
+// 2. COURSES & LECTURES API
 // ==========================================
 
-app.get('/api/courses', (req, res) => {
+app.get('/api/courses', async (req, res) => {
+  try {
+    if (mongoose.connection.readyState === 1) {
+      const courses = await CourseModel.find().lean();
+      if (courses && courses.length > 0) return res.json(courses);
+    }
+  } catch (e) {
+    console.error('Mongo courses get error:', e);
+  }
   const courses = readJsonFile(COURSES_FILE, INITIAL_SEED_COURSES);
   res.json(courses);
 });
 
-app.get('/api/courses/:id', (req, res) => {
+app.get('/api/courses/:id', async (req, res) => {
+  try {
+    if (mongoose.connection.readyState === 1) {
+      const course = await CourseModel.findOne({ id: req.params.id }).lean();
+      if (course) return res.json(course);
+    }
+  } catch (e) {
+    console.error('Mongo course get error:', e);
+  }
   const courses = readJsonFile(COURSES_FILE, INITIAL_SEED_COURSES);
   const course = courses.find((c) => c.id === req.params.id);
   if (!course) return res.status(404).json({ error: 'Course not found' });
@@ -569,16 +863,8 @@ app.get('/api/courses/:id', (req, res) => {
 });
 
 // Add / Upload New Lecture into Course Module
-app.post('/api/courses/:id/modules/:moduleIndex/lectures', (req, res) => {
-  const courses = readJsonFile(COURSES_FILE, INITIAL_SEED_COURSES);
-  const course = courses.find((c) => c.id === req.params.id);
-  if (!course) return res.status(404).json({ error: 'Course not found' });
-
+app.post('/api/courses/:id/modules/:moduleIndex/lectures', async (req, res) => {
   const modIdx = parseInt(req.params.moduleIndex, 10);
-  if (!course.modules || !course.modules[modIdx]) {
-    return res.status(404).json({ error: 'Module not found' });
-  }
-
   const newLecture = {
     id: req.body.id || `lec-${Date.now()}`,
     title: req.body.title || 'Untitled Master Lecture',
@@ -587,48 +873,93 @@ app.post('/api/courses/:id/modules/:moduleIndex/lectures', (req, res) => {
     summary: req.body.summary || 'Master practical demonstration by Artist Kuldeep Singh.'
   };
 
-  if (!course.modules[modIdx].lectures) {
-    course.modules[modIdx].lectures = [];
+  let updatedCourse;
+
+  try {
+    if (mongoose.connection.readyState === 1) {
+      const course = await CourseModel.findOne({ id: req.params.id });
+      if (course && course.modules && course.modules[modIdx]) {
+        if (!course.modules[modIdx].lectures) {
+          course.modules[modIdx].lectures = [];
+        }
+        course.modules[modIdx].lectures.push(newLecture);
+        course.modules[modIdx].lessonsCount = course.modules[modIdx].lectures.length;
+        if (!course.modules[modIdx].topics) course.modules[modIdx].topics = [];
+        course.modules[modIdx].topics.push(newLecture.title);
+
+        course.markModified('modules');
+        await course.save();
+        updatedCourse = course.toObject();
+      }
+    }
+  } catch (e) {
+    console.error('Mongo lecture add error:', e);
   }
 
-  course.modules[modIdx].lectures.push(newLecture);
-  course.modules[modIdx].lessonsCount = course.modules[modIdx].lectures.length;
+  // Backup to file
+  const courses = readJsonFile(COURSES_FILE, INITIAL_SEED_COURSES);
+  const course = courses.find((c) => c.id === req.params.id);
+  if (course && course.modules && course.modules[modIdx]) {
+    if (!course.modules[modIdx].lectures) course.modules[modIdx].lectures = [];
+    course.modules[modIdx].lectures.push(newLecture);
+    course.modules[modIdx].lessonsCount = course.modules[modIdx].lectures.length;
+    writeJsonFile(COURSES_FILE, courses);
+    if (!updatedCourse) updatedCourse = course;
+  }
 
-  writeJsonFile(COURSES_FILE, courses);
-  broadcastUpdate('LECTURE_ADDED', { courseId: course.id, moduleIndex: modIdx, lecture: newLecture });
+  if (!updatedCourse) return res.status(404).json({ error: 'Course or module not found' });
 
-  console.log(`[BACKEND] New Lecture Added to "${course.title}": "${newLecture.title}"`);
-  res.status(201).json({ success: true, lecture: newLecture, course });
+  broadcastUpdate('LECTURE_ADDED', { courseId: updatedCourse.id, moduleIndex: modIdx, lecture: newLecture });
+  console.log(`[BACKEND] New Lecture Added to "${updatedCourse.title}": "${newLecture.title}"`);
+  res.status(201).json({ success: true, lecture: newLecture, course: updatedCourse });
 });
 
 // Delete Lecture from Course Module
-app.delete('/api/courses/:id/modules/:moduleIndex/lectures/:lectureIndex', (req, res) => {
-  const courses = readJsonFile(COURSES_FILE, INITIAL_SEED_COURSES);
-  const course = courses.find((c) => c.id === req.params.id);
-  if (!course) return res.status(404).json({ error: 'Course not found' });
-
+app.delete('/api/courses/:id/modules/:moduleIndex/lectures/:lectureIndex', async (req, res) => {
   const modIdx = parseInt(req.params.moduleIndex, 10);
-  if (!course.modules || !course.modules[modIdx]) {
-    return res.status(404).json({ error: 'Module not found' });
+  const lecIdx = parseInt(req.params.lectureIndex, 10);
+  let updatedCourse;
+
+  try {
+    if (mongoose.connection.readyState === 1) {
+      const course = await CourseModel.findOne({ id: req.params.id });
+      if (course && course.modules && course.modules[modIdx] && course.modules[modIdx].lectures) {
+        course.modules[modIdx].lectures = course.modules[modIdx].lectures.filter((_, idx) => idx !== lecIdx);
+        course.modules[modIdx].lessonsCount = course.modules[modIdx].lectures.length;
+        course.modules[modIdx].topics = course.modules[modIdx].lectures.map((l) => l.title);
+        const total = course.modules.reduce((acc, m) => acc + (m.lectures ? m.lectures.length : m.lessonsCount), 0);
+        course.totalLessons = total;
+
+        course.markModified('modules');
+        await course.save();
+        updatedCourse = course.toObject();
+      }
+    }
+  } catch (e) {
+    console.error('Mongo lecture delete error:', e);
   }
 
-  const lecIdx = parseInt(req.params.lectureIndex, 10);
-  if (course.modules[modIdx].lectures) {
+  // Backup to file
+  const courses = readJsonFile(COURSES_FILE, INITIAL_SEED_COURSES);
+  const course = courses.find((c) => c.id === req.params.id);
+  if (course && course.modules && course.modules[modIdx] && course.modules[modIdx].lectures) {
     course.modules[modIdx].lectures = course.modules[modIdx].lectures.filter((_, idx) => idx !== lecIdx);
     course.modules[modIdx].lessonsCount = course.modules[modIdx].lectures.length;
     course.modules[modIdx].topics = course.modules[modIdx].lectures.map((l) => l.title);
+    const total = course.modules.reduce((acc, m) => acc + (m.lectures ? m.lectures.length : m.lessonsCount), 0);
+    course.totalLessons = total;
+    writeJsonFile(COURSES_FILE, courses);
+    if (!updatedCourse) updatedCourse = course;
   }
-  const total = course.modules.reduce((acc, m) => acc + (m.lectures ? m.lectures.length : m.lessonsCount), 0);
-  course.totalLessons = total;
 
-  writeJsonFile(COURSES_FILE, courses);
-  broadcastUpdate('LECTURE_DELETED', { courseId: course.id, moduleIndex: modIdx, lectureIndex: lecIdx });
-  res.json({ success: true, course });
+  if (!updatedCourse) return res.status(404).json({ error: 'Course or lecture not found' });
+
+  broadcastUpdate('LECTURE_DELETED', { courseId: updatedCourse.id, moduleIndex: modIdx, lectureIndex: lecIdx });
+  res.json({ success: true, course: updatedCourse });
 });
 
 // Create New Course / Live Batch
-app.post('/api/courses', (req, res) => {
-  const courses = readJsonFile(COURSES_FILE, INITIAL_SEED_COURSES);
+app.post('/api/courses', async (req, res) => {
   const newCourse = {
     id: req.body.id || `course-${Date.now()}`,
     title: req.body.title || 'Untitled Masterclass Live Batch',
@@ -666,48 +997,88 @@ app.post('/api/courses', (req, res) => {
     ...req.body
   };
 
+  try {
+    if (mongoose.connection.readyState === 1) {
+      await CourseModel.findOneAndUpdate({ id: newCourse.id }, newCourse, { upsert: true });
+    }
+  } catch (e) {
+    console.error('Mongo course create error:', e);
+  }
+
+  const courses = readJsonFile(COURSES_FILE, INITIAL_SEED_COURSES);
   courses.unshift(newCourse);
   writeJsonFile(COURSES_FILE, courses);
+
   broadcastUpdate('COURSE_ADDED', newCourse);
-  console.log(`[BACKEND] New Course / Live Batch Created: "${newCourse.title}" (Starts: ${newCourse.startDate})`);
+  console.log(`[BACKEND] New Course Created: "${newCourse.title}" (#${newCourse.id})`);
   res.status(201).json({ success: true, course: newCourse });
 });
 
-// Delete Course / Live Batch
-app.delete('/api/courses/:id', (req, res) => {
-  const courses = readJsonFile(COURSES_FILE, INITIAL_SEED_COURSES);
-  const filtered = courses.filter((c) => c.id !== req.params.id);
-  if (filtered.length === courses.length) {
-    return res.status(404).json({ error: 'Course not found' });
-  }
-  writeJsonFile(COURSES_FILE, filtered);
-  broadcastUpdate('COURSE_DELETED', { id: req.params.id });
-  res.json({ success: true, message: `Course ${req.params.id} deleted` });
-});
-
 // Update Course
-app.put('/api/courses/:id', (req, res) => {
+app.put('/api/courses/:id', async (req, res) => {
+  let updatedCourse;
+  try {
+    if (mongoose.connection.readyState === 1) {
+      updatedCourse = await CourseModel.findOneAndUpdate(
+        { id: req.params.id },
+        { ...req.body, id: req.params.id },
+        { new: true }
+      ).lean();
+    }
+  } catch (e) {
+    console.error('Mongo course update error:', e);
+  }
+
   const courses = readJsonFile(COURSES_FILE, INITIAL_SEED_COURSES);
   const idx = courses.findIndex((c) => c.id === req.params.id);
-  if (idx === -1) return res.status(404).json({ error: 'Course not found' });
+  if (idx !== -1) {
+    courses[idx] = { ...courses[idx], ...req.body, id: courses[idx].id };
+    writeJsonFile(COURSES_FILE, courses);
+    if (!updatedCourse) updatedCourse = courses[idx];
+  }
 
-  courses[idx] = { ...courses[idx], ...req.body, id: courses[idx].id };
-  writeJsonFile(COURSES_FILE, courses);
-  broadcastUpdate('COURSE_UPDATED', courses[idx]);
-  res.json({ success: true, course: courses[idx] });
+  if (!updatedCourse) return res.status(404).json({ error: 'Course not found' });
+
+  broadcastUpdate('COURSE_UPDATED', updatedCourse);
+  res.json({ success: true, course: updatedCourse });
+});
+
+// Delete Course
+app.delete('/api/courses/:id', async (req, res) => {
+  try {
+    if (mongoose.connection.readyState === 1) {
+      await CourseModel.deleteOne({ id: req.params.id });
+    }
+  } catch (e) {
+    console.error('Mongo course delete error:', e);
+  }
+
+  const courses = readJsonFile(COURSES_FILE, INITIAL_SEED_COURSES);
+  const filtered = courses.filter((c) => c.id !== req.params.id);
+  writeJsonFile(COURSES_FILE, filtered);
+
+  broadcastUpdate('COURSE_DELETED', { id: req.params.id });
+  res.json({ success: true, message: `Course ${req.params.id} deleted` });
 });
 
 // ==========================================
 // 3. STUDENTS & ENROLLMENTS API
 // ==========================================
 
-app.get('/api/students', (req, res) => {
+app.get('/api/students', async (req, res) => {
+  try {
+    if (mongoose.connection.readyState === 1) {
+      const students = await StudentModel.find().sort({ createdAt: -1 }).lean();
+      if (students && students.length > 0) return res.json(students);
+    }
+  } catch (e) {
+    console.error('Mongo students get error:', e);
+  }
   const students = readJsonFile(STUDENTS_FILE, INITIAL_SEED_STUDENTS);
   res.json(students);
 });
 
-app.post('/api/students', (req, res) => {
-  const students = readJsonFile(STUDENTS_FILE, INITIAL_SEED_STUDENTS);
+app.post('/api/students', async (req, res) => {
   const newStudent = {
     id: req.body.id || `stu-${Date.now()}`,
     name: req.body.name || 'Student Artist',
@@ -723,38 +1094,87 @@ app.post('/api/students', (req, res) => {
     avatar: req.body.avatar || 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?q=80&w=150&auto=format&fit=crop'
   };
 
+  let savedStudent;
+
+  try {
+    if (mongoose.connection.readyState === 1) {
+      const existing = await StudentModel.findOne({
+        email: { $regex: new RegExp(`^${newStudent.email}$`, 'i') },
+        courseId: newStudent.courseId
+      });
+      if (existing) {
+        savedStudent = await StudentModel.findOneAndUpdate(
+          { _id: existing._id },
+          { ...newStudent, id: existing.id },
+          { new: true }
+        ).lean();
+      } else {
+        savedStudent = await StudentModel.create(newStudent);
+      }
+    }
+  } catch (e) {
+    console.error('Mongo student post error:', e);
+  }
+
+  const students = readJsonFile(STUDENTS_FILE, INITIAL_SEED_STUDENTS);
   const existingIdx = students.findIndex(
     (s) => s.email.toLowerCase() === newStudent.email.toLowerCase() && s.courseId === newStudent.courseId
   );
   if (existingIdx !== -1) {
     students[existingIdx] = { ...students[existingIdx], ...newStudent, id: students[existingIdx].id };
     writeJsonFile(STUDENTS_FILE, students);
-    return res.status(200).json({ success: true, student: students[existingIdx] });
+    if (!savedStudent) savedStudent = students[existingIdx];
+  } else {
+    students.unshift(newStudent);
+    writeJsonFile(STUDENTS_FILE, students);
+    if (!savedStudent) savedStudent = newStudent;
   }
 
-  students.unshift(newStudent);
-  writeJsonFile(STUDENTS_FILE, students);
-  broadcastUpdate('STUDENT_ENROLLED', newStudent);
-
-  console.log(`[BACKEND] New Student Enrolled: ${newStudent.name} (${newStudent.courseTitle})`);
-  res.status(201).json({ success: true, student: newStudent });
+  broadcastUpdate('STUDENT_ENROLLED', savedStudent);
+  console.log(`[BACKEND] Student Enrolled: ${savedStudent.name} (${savedStudent.courseTitle})`);
+  res.status(201).json({ success: true, student: savedStudent });
 });
 
-app.put('/api/students/:id', (req, res) => {
+app.put('/api/students/:id', async (req, res) => {
+  let updated;
+  try {
+    if (mongoose.connection.readyState === 1) {
+      updated = await StudentModel.findOneAndUpdate(
+        { id: req.params.id },
+        { ...req.body, id: req.params.id },
+        { new: true }
+      ).lean();
+    }
+  } catch (e) {
+    console.error('Mongo student update error:', e);
+  }
+
   const students = readJsonFile(STUDENTS_FILE, INITIAL_SEED_STUDENTS);
   const idx = students.findIndex((s) => s.id === req.params.id);
-  if (idx === -1) return res.status(404).json({ error: 'Student not found' });
+  if (idx !== -1) {
+    students[idx] = { ...students[idx], ...req.body, id: students[idx].id };
+    writeJsonFile(STUDENTS_FILE, students);
+    if (!updated) updated = students[idx];
+  }
 
-  students[idx] = { ...students[idx], ...req.body, id: students[idx].id };
-  writeJsonFile(STUDENTS_FILE, students);
-  broadcastUpdate('STUDENT_UPDATED', students[idx]);
-  res.json({ success: true, student: students[idx] });
+  if (!updated) return res.status(404).json({ error: 'Student not found' });
+  broadcastUpdate('STUDENT_UPDATED', updated);
+  res.json({ success: true, student: updated });
 });
 
-app.delete('/api/students/:id', (req, res) => {
+app.delete('/api/students/:id', async (req, res) => {
+  try {
+    if (mongoose.connection.readyState === 1) {
+      await StudentModel.deleteOne({ id: req.params.id });
+    }
+  } catch (e) {
+    console.error('Mongo student delete error:', e);
+  }
+
   const students = readJsonFile(STUDENTS_FILE, INITIAL_SEED_STUDENTS);
   const filtered = students.filter((s) => s.id !== req.params.id);
   writeJsonFile(STUDENTS_FILE, filtered);
+
   broadcastUpdate('STUDENT_DELETED', { id: req.params.id });
   res.json({ success: true, id: req.params.id });
 });
@@ -763,22 +1183,36 @@ app.delete('/api/students/:id', (req, res) => {
 // 4. ARTWORKS API
 // ==========================================
 
-app.get('/api/artworks', (req, res) => {
+app.get('/api/artworks', async (req, res) => {
+  try {
+    if (mongoose.connection.readyState === 1) {
+      const artworks = await ArtworkModel.find().lean();
+      if (artworks && artworks.length > 0) return res.json(artworks);
+    }
+  } catch (e) {
+    console.error('Mongo artworks get error:', e);
+  }
   const artworks = readJsonFile(ARTWORKS_FILE, INITIAL_SEED_ARTWORKS);
   res.json(artworks);
 });
 
-app.get('/api/artworks/:id', (req, res) => {
+app.get('/api/artworks/:id', async (req, res) => {
+  try {
+    if (mongoose.connection.readyState === 1) {
+      const item = await ArtworkModel.findOne({ id: req.params.id }).lean();
+      if (item) return res.json(item);
+    }
+  } catch (e) {
+    console.error('Mongo artwork get error:', e);
+  }
   const artworks = readJsonFile(ARTWORKS_FILE, INITIAL_SEED_ARTWORKS);
   const item = artworks.find((a) => a.id === req.params.id);
   if (!item) return res.status(404).json({ error: 'Artwork not found' });
   res.json(item);
 });
 
-app.post('/api/artworks', (req, res) => {
+app.post('/api/artworks', async (req, res) => {
   const body = req.body;
-  const artworks = readJsonFile(ARTWORKS_FILE, INITIAL_SEED_ARTWORKS);
-
   const newArtwork = {
     id: body.id || `art-${Date.now()}`,
     title: body.title || 'Untitled Artwork',
@@ -799,29 +1233,63 @@ app.post('/api/artworks', (req, res) => {
     varnishType: body.varnishType || 'Archival Satin Varnish'
   };
 
+  try {
+    if (mongoose.connection.readyState === 1) {
+      await ArtworkModel.findOneAndUpdate({ id: newArtwork.id }, newArtwork, { upsert: true });
+    }
+  } catch (e) {
+    console.error('Mongo artwork create error:', e);
+  }
+
+  const artworks = readJsonFile(ARTWORKS_FILE, INITIAL_SEED_ARTWORKS);
   artworks.unshift(newArtwork);
   writeJsonFile(ARTWORKS_FILE, artworks);
-  broadcastUpdate('ARTWORK_CREATED', newArtwork);
 
+  broadcastUpdate('ARTWORK_CREATED', newArtwork);
   console.log(`[BACKEND] New Artwork Added: "${newArtwork.title}" (#${newArtwork.id}) - ₹${newArtwork.price}`);
   res.status(201).json({ success: true, artwork: newArtwork });
 });
 
-app.put('/api/artworks/:id', (req, res) => {
+app.put('/api/artworks/:id', async (req, res) => {
+  let updated;
+  try {
+    if (mongoose.connection.readyState === 1) {
+      updated = await ArtworkModel.findOneAndUpdate(
+        { id: req.params.id },
+        { ...req.body, id: req.params.id },
+        { new: true }
+      ).lean();
+    }
+  } catch (e) {
+    console.error('Mongo artwork update error:', e);
+  }
+
   const artworks = readJsonFile(ARTWORKS_FILE, INITIAL_SEED_ARTWORKS);
   const idx = artworks.findIndex((a) => a.id === req.params.id);
-  if (idx === -1) return res.status(404).json({ error: 'Artwork not found' });
+  if (idx !== -1) {
+    artworks[idx] = { ...artworks[idx], ...req.body, id: artworks[idx].id };
+    writeJsonFile(ARTWORKS_FILE, artworks);
+    if (!updated) updated = artworks[idx];
+  }
 
-  artworks[idx] = { ...artworks[idx], ...req.body, id: artworks[idx].id };
-  writeJsonFile(ARTWORKS_FILE, artworks);
-  broadcastUpdate('ARTWORK_UPDATED', artworks[idx]);
-  res.json({ success: true, artwork: artworks[idx] });
+  if (!updated) return res.status(404).json({ error: 'Artwork not found' });
+  broadcastUpdate('ARTWORK_UPDATED', updated);
+  res.json({ success: true, artwork: updated });
 });
 
-app.delete('/api/artworks/:id', (req, res) => {
+app.delete('/api/artworks/:id', async (req, res) => {
+  try {
+    if (mongoose.connection.readyState === 1) {
+      await ArtworkModel.deleteOne({ id: req.params.id });
+    }
+  } catch (e) {
+    console.error('Mongo artwork delete error:', e);
+  }
+
   const artworks = readJsonFile(ARTWORKS_FILE, INITIAL_SEED_ARTWORKS);
   const filtered = artworks.filter((a) => a.id !== req.params.id);
   writeJsonFile(ARTWORKS_FILE, filtered);
+
   broadcastUpdate('ARTWORK_DELETED', { id: req.params.id });
   res.json({ success: true, id: req.params.id });
 });
@@ -830,22 +1298,36 @@ app.delete('/api/artworks/:id', (req, res) => {
 // 5. ORDERS API
 // ==========================================
 
-app.get('/api/orders', (req, res) => {
+app.get('/api/orders', async (req, res) => {
+  try {
+    if (mongoose.connection.readyState === 1) {
+      const orders = await OrderModel.find().sort({ createdAt: -1, _id: -1 }).lean();
+      if (orders && orders.length > 0) return res.json(orders);
+    }
+  } catch (e) {
+    console.error('Mongo orders get error:', e);
+  }
   const orders = readJsonFile(ORDERS_FILE, INITIAL_SEED_ORDERS);
   res.json(orders);
 });
 
-app.get('/api/orders/:id', (req, res) => {
+app.get('/api/orders/:id', async (req, res) => {
+  try {
+    if (mongoose.connection.readyState === 1) {
+      const order = await OrderModel.findOne({ id: req.params.id }).lean();
+      if (order) return res.json(order);
+    }
+  } catch (e) {
+    console.error('Mongo order get error:', e);
+  }
   const orders = readJsonFile(ORDERS_FILE, INITIAL_SEED_ORDERS);
   const order = orders.find((o) => o.id === req.params.id);
   if (!order) return res.status(404).json({ error: 'Order not found' });
   res.json(order);
 });
 
-app.post('/api/orders', (req, res) => {
+app.post('/api/orders', async (req, res) => {
   const body = req.body;
-  const orders = readJsonFile(ORDERS_FILE, INITIAL_SEED_ORDERS);
-
   const generatedId = body.id || ('ORD_' + Math.floor(10000 + Math.random() * 90000));
   const now = new Date();
   const dateStr = body.date || now.toLocaleDateString('en-US', { day: '2-digit', month: 'short', year: 'numeric' });
@@ -881,43 +1363,217 @@ app.post('/api/orders', (req, res) => {
     }
   };
 
+  try {
+    if (mongoose.connection.readyState === 1) {
+      await OrderModel.findOneAndUpdate({ id: newOrder.id }, newOrder, { upsert: true });
+    }
+  } catch (e) {
+    console.error('Mongo order create error:', e);
+  }
+
+  const orders = readJsonFile(ORDERS_FILE, INITIAL_SEED_ORDERS);
   orders.unshift(newOrder);
   writeJsonFile(ORDERS_FILE, orders);
-  broadcastUpdate('ORDER_CREATED', newOrder);
 
+  broadcastUpdate('ORDER_CREATED', newOrder);
   console.log(`[BACKEND] New Order Placed: #${newOrder.id} - ${newOrder.customerName} - ₹${newOrder.totalAmount}`);
   res.status(201).json({ success: true, order: newOrder });
 });
 
-app.put('/api/orders/:id', (req, res) => {
+app.put('/api/orders/:id', async (req, res) => {
+  let updated;
+  try {
+    if (mongoose.connection.readyState === 1) {
+      updated = await OrderModel.findOneAndUpdate(
+        { id: req.params.id },
+        { ...req.body, id: req.params.id },
+        { new: true }
+      ).lean();
+    }
+  } catch (e) {
+    console.error('Mongo order update error:', e);
+  }
+
   const orders = readJsonFile(ORDERS_FILE, INITIAL_SEED_ORDERS);
   const idx = orders.findIndex((o) => o.id === req.params.id);
-  if (idx === -1) return res.status(404).json({ error: 'Order not found' });
+  if (idx !== -1) {
+    orders[idx] = { ...orders[idx], ...req.body, id: orders[idx].id };
+    writeJsonFile(ORDERS_FILE, orders);
+    if (!updated) updated = orders[idx];
+  }
 
-  orders[idx] = { ...orders[idx], ...req.body, id: orders[idx].id };
-  writeJsonFile(ORDERS_FILE, orders);
-  broadcastUpdate('ORDER_UPDATED', orders[idx]);
-  res.json({ success: true, order: orders[idx] });
+  if (!updated) return res.status(404).json({ error: 'Order not found' });
+  broadcastUpdate('ORDER_UPDATED', updated);
+  res.json({ success: true, order: updated });
 });
 
-app.delete('/api/orders/:id', (req, res) => {
+app.delete('/api/orders/:id', async (req, res) => {
+  try {
+    if (mongoose.connection.readyState === 1) {
+      await OrderModel.deleteOne({ id: req.params.id });
+    }
+  } catch (e) {
+    console.error('Mongo order delete error:', e);
+  }
+
   const orders = readJsonFile(ORDERS_FILE, INITIAL_SEED_ORDERS);
   const filtered = orders.filter((o) => o.id !== req.params.id);
   writeJsonFile(ORDERS_FILE, filtered);
+
   broadcastUpdate('ORDER_DELETED', { id: req.params.id });
   res.json({ success: true, id: req.params.id });
 });
 
-app.delete('/api/orders', (req, res) => {
+app.delete('/api/orders', async (req, res) => {
+  try {
+    if (mongoose.connection.readyState === 1) {
+      await OrderModel.deleteMany({});
+    }
+  } catch (e) {
+    console.error('Mongo orders clear error:', e);
+  }
+
   writeJsonFile(ORDERS_FILE, []);
   broadcastUpdate('ORDERS_CLEARED', {});
   res.json({ success: true, message: 'All orders cleared' });
 });
 
+// ==========================================
+// 6. ARTIST PROFILE & ATELIER VIDEO API
+// ==========================================
+
+app.get('/api/profile', async (req, res) => {
+  try {
+    if (mongoose.connection.readyState === 1) {
+      let profile = await ProfileModel.findOne({ id: 'primary_profile' }).lean();
+      if (!profile) {
+        profile = await ProfileModel.create(INITIAL_ARTIST_PROFILE);
+      }
+      return res.json(profile);
+    }
+  } catch (e) {
+    console.error('Mongo profile get error:', e);
+  }
+  const profile = readJsonFile(PROFILE_FILE, INITIAL_ARTIST_PROFILE);
+  res.json(profile);
+});
+
+app.put('/api/profile', async (req, res) => {
+  let updated;
+  try {
+    if (mongoose.connection.readyState === 1) {
+      updated = await ProfileModel.findOneAndUpdate(
+        { id: 'primary_profile' },
+        { ...req.body, id: 'primary_profile' },
+        { upsert: true, new: true }
+      ).lean();
+    }
+  } catch (e) {
+    console.error('Mongo profile update error:', e);
+  }
+
+  const current = readJsonFile(PROFILE_FILE, INITIAL_ARTIST_PROFILE);
+  const merged = { ...current, ...req.body, id: 'primary_profile' };
+  writeJsonFile(PROFILE_FILE, merged);
+  if (!updated) updated = merged;
+
+  broadcastUpdate('PROFILE_UPDATED', updated);
+  console.log(`[BACKEND] Artist Profile / Atelier Video Updated: "${updated.studioVideoTitle}"`);
+  res.json({ success: true, profile: updated });
+});
+
+// ==========================================
+// 7. RAZORPAY PAYMENT API
+// ==========================================
+
+app.post('/api/payment/create-order', async (req, res) => {
+  const { amount, currency = 'INR', receipt, notes } = req.body;
+  if (!amount || amount <= 0) {
+    return res.status(400).json({ error: 'Valid payment amount is required' });
+  }
+
+  const amountInPaise = Math.round(Number(amount) * 100);
+
+  const razorpayKeyId = process.env.RAZORPAY_KEY_ID;
+  const razorpayKeySecret = process.env.RAZORPAY_KEY_SECRET;
+
+  if (razorpayKeyId && razorpayKeySecret) {
+    try {
+      const razorpay = new Razorpay({
+        key_id: razorpayKeyId,
+        key_secret: razorpayKeySecret
+      });
+
+      const order = await razorpay.orders.create({
+        amount: amountInPaise,
+        currency,
+        receipt: receipt || `rcpt_${Date.now()}`,
+        notes: notes || {}
+      });
+
+      return res.json({
+        success: true,
+        orderId: order.id,
+        amount: order.amount,
+        currency: order.currency,
+        keyId: razorpayKeyId,
+        isLiveRazorpay: true
+      });
+    } catch (err) {
+      console.error('Razorpay order creation error:', err);
+      return res.status(500).json({ error: 'Failed to create Razorpay order', details: err.message });
+    }
+  } else {
+    // Demo Simulator Mode when real keys are not yet provided
+    const demoOrderId = `order_demo_${Date.now()}`;
+    return res.json({
+      success: true,
+      orderId: demoOrderId,
+      amount: amountInPaise,
+      currency: 'INR',
+      keyId: 'rzp_test_placeholder',
+      isLiveRazorpay: false,
+      message: 'Razorpay keys not yet set in environment. Running in Demo Simulator mode.'
+    });
+  }
+});
+
+app.post('/api/payment/verify-payment', (req, res) => {
+  const { razorpay_order_id, razorpay_payment_id, razorpay_signature } = req.body;
+  const razorpayKeySecret = process.env.RAZORPAY_KEY_SECRET;
+
+  if (razorpayKeySecret && razorpay_order_id && razorpay_payment_id && razorpay_signature) {
+    const body = razorpay_order_id + '|' + razorpay_payment_id;
+    const expectedSignature = crypto
+      .createHmac('sha256', razorpayKeySecret)
+      .update(body.toString())
+      .digest('hex');
+
+    if (expectedSignature === razorpay_signature) {
+      return res.json({ success: true, verified: true, paymentId: razorpay_payment_id });
+    } else {
+      return res.status(400).json({ success: false, verified: false, error: 'Invalid payment signature verification failed' });
+    }
+  } else {
+    // Simulator verification
+    return res.json({
+      success: true,
+      verified: true,
+      paymentId: razorpay_payment_id || `pay_demo_${Date.now()}`,
+      mode: 'simulator'
+    });
+  }
+});
+
+// -------------------------------------------------------------
+// START SERVER
+// -------------------------------------------------------------
+
 app.listen(PORT, '0.0.0.0', () => {
   console.log(`====================================================`);
   console.log(`🎨 Artist Kuldeep Singh 24/7 Complete Cloud API Online!`);
   console.log(`🚀 Port: http://localhost:${PORT}`);
-  console.log(`📦 Database: ${DATA_DIR}`);
+  console.log(`☁️ Database: MongoDB Atlas (Cluster0)`);
+  console.log(`💳 Razorpay Gateway: ${process.env.RAZORPAY_KEY_ID ? 'Configured' : 'Demo Simulator Active'}`);
   console.log(`====================================================`);
 });
