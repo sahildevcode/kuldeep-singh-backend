@@ -8,6 +8,7 @@ import dns from 'dns';
 import mongoose from 'mongoose';
 import crypto from 'crypto';
 import Razorpay from 'razorpay';
+import multer from 'multer';
 
 // Force public DNS resolution to prevent local ISP SRV resolution issues
 dns.setServers(['8.8.8.8', '1.1.1.1']);
@@ -1562,6 +1563,116 @@ app.post('/api/payment/verify-payment', (req, res) => {
       paymentId: razorpay_payment_id || `pay_demo_${Date.now()}`,
       mode: 'simulator'
     });
+  }
+});
+
+// ==========================================
+// 8. BUNNY STREAM VIDEO UPLOAD API
+// ==========================================
+
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 500 * 1024 * 1024 } // 500 MB max
+});
+
+const BUNNY_LIBRARY_ID = process.env.BUNNY_STREAM_LIBRARY_ID || '765702';
+const BUNNY_API_KEY = process.env.BUNNY_STREAM_API_KEY || 'baefbf98-2a8c-46d2-a6e5a219a81c-699b-4f46';
+const BUNNY_CDN_HOST = process.env.BUNNY_CDN_HOST || 'vz-0cb43856-2c7.b-cdn.net';
+
+app.post('/api/upload/video', upload.single('video'), async (req, res) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({ error: 'No video file provided' });
+    }
+
+    const title = req.body.title || req.file.originalname || `Kuldeep Studio Atelier Video - ${Date.now()}`;
+    const fileSizeMB = (req.file.size / (1024 * 1024)).toFixed(2);
+    console.log(`[BUNNY STREAM] Initiating upload: "${title}" (${fileSizeMB} MB)`);
+
+    // 1. Create Video Object in Bunny Stream
+    const createRes = await fetch(`https://video.bunnycdn.com/library/${BUNNY_LIBRARY_ID}/videos`, {
+      method: 'POST',
+      headers: {
+        'AccessKey': BUNNY_API_KEY,
+        'Content-Type': 'application/json',
+        'accept': 'application/json'
+      },
+      body: JSON.stringify({ title })
+    });
+
+    if (!createRes.ok) {
+      const errText = await createRes.text();
+      throw new Error(`Failed to create video entry in Bunny Stream: ${createRes.status} ${errText}`);
+    }
+
+    const videoData = await createRes.json();
+    const videoGuid = videoData.guid;
+    console.log(`[BUNNY STREAM] Video created: GUID ${videoGuid}. Now uploading binary data...`);
+
+    // 2. Upload Binary Stream to Bunny Stream
+    const uploadRes = await fetch(`https://video.bunnycdn.com/library/${BUNNY_LIBRARY_ID}/videos/${videoGuid}`, {
+      method: 'PUT',
+      headers: {
+        'AccessKey': BUNNY_API_KEY,
+        'Content-Type': 'application/octet-stream'
+      },
+      body: req.file.buffer
+    });
+
+    if (!uploadRes.ok) {
+      const errText = await uploadRes.text();
+      throw new Error(`Failed to upload binary stream to Bunny: ${uploadRes.status} ${errText}`);
+    }
+
+    console.log(`✅ [BUNNY STREAM] Video binary uploaded successfully for GUID: ${videoGuid}!`);
+
+    // 3. Generate High-Speed CDN & Player URLs
+    const embedUrl = `https://iframe.mediadelivery.net/embed/${BUNNY_LIBRARY_ID}/${videoGuid}?autoplay=true&loop=false&muted=false&preload=true&responsive=true`;
+    const directPlayUrl = `https://${BUNNY_CDN_HOST}/${videoGuid}/play_720p.mp4`;
+    const hlsUrl = `https://${BUNNY_CDN_HOST}/${videoGuid}/playlist.m3u8`;
+    const thumbnailUrl = `https://${BUNNY_CDN_HOST}/${videoGuid}/thumbnail.jpg`;
+
+    // 4. Update MongoDB Profile Automatically
+    try {
+      if (mongoose.connection.readyState === 1) {
+        await ProfileModel.findOneAndUpdate(
+          { id: 'primary_profile' },
+          {
+            studioVideoUrl: embedUrl,
+            studioVideoTitle: title,
+            studioVideoPoster: thumbnailUrl,
+            updatedAt: new Date().toISOString()
+          },
+          { upsert: true }
+        );
+      }
+    } catch (dbErr) {
+      console.error('Failed to auto-update profile in mongo:', dbErr);
+    }
+
+    // Backup to local file
+    const currentProfile = readJsonFile(PROFILE_FILE, INITIAL_ARTIST_PROFILE);
+    currentProfile.studioVideoUrl = embedUrl;
+    currentProfile.studioVideoTitle = title;
+    currentProfile.studioVideoPoster = thumbnailUrl;
+    writeJsonFile(PROFILE_FILE, currentProfile);
+
+    // 5. Broadcast live SSE update
+    broadcastUpdate('PROFILE_UPDATED', currentProfile);
+
+    return res.json({
+      success: true,
+      message: 'Video successfully uploaded to Bunny Stream!',
+      videoGuid,
+      embedUrl,
+      directPlayUrl,
+      hlsUrl,
+      thumbnailUrl,
+      title
+    });
+  } catch (err) {
+    console.error('❌ [BUNNY STREAM] Upload Error:', err);
+    return res.status(500).json({ error: 'Video upload to Bunny Stream failed', details: err.message });
   }
 });
 
