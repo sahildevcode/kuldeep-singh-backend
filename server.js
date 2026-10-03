@@ -1737,6 +1737,62 @@ const BUNNY_LIBRARY_ID = process.env.BUNNY_STREAM_LIBRARY_ID || '765702';
 const BUNNY_API_KEY = process.env.BUNNY_STREAM_API_KEY || 'baefbf98-2a8c-46d2-a6e5a219a81c-699b-4f46';
 const BUNNY_CDN_HOST = process.env.BUNNY_CDN_HOST || 'vz-0cb43856-2c7.b-cdn.net';
 
+// Direct Bunny Stream TUS Upload Auth Endpoint (Handles 2GB+ High Speed Browser Uploads Directly to Bunny.net)
+app.post('/api/upload/bunny-token', async (req, res) => {
+  try {
+    const title = req.body.title || `Kuldeep Studio Video - ${Date.now()}`;
+
+    // 1. Create Video Entry in Bunny Stream
+    const createRes = await fetch(`https://video.bunnycdn.com/library/${BUNNY_LIBRARY_ID}/videos`, {
+      method: 'POST',
+      headers: {
+        'AccessKey': BUNNY_API_KEY,
+        'Content-Type': 'application/json',
+        'accept': 'application/json'
+      },
+      body: JSON.stringify({ title })
+    });
+
+    if (!createRes.ok) {
+      const errText = await createRes.text();
+      throw new Error(`Failed to create video entry in Bunny Stream: ${createRes.status} ${errText}`);
+    }
+
+    const videoData = await createRes.json();
+    const videoId = videoData.guid;
+
+    // 2. Generate TUS Auth Signature (Valid for 24 Hours)
+    // Formula: SHA256(library_id + api_key + expiration_time + video_id)
+    const expiration = Math.floor(Date.now() / 1000) + 86400; // 24 hours
+    const signature = crypto.createHash('sha256').update(BUNNY_LIBRARY_ID + BUNNY_API_KEY + expiration + videoId).digest('hex');
+
+    // 3. URLs
+    const embedUrl = `https://iframe.mediadelivery.net/embed/${BUNNY_LIBRARY_ID}/${videoId}?autoplay=true&loop=false&muted=false&preload=true&responsive=true`;
+    const directPlayUrl = `https://${BUNNY_CDN_HOST}/${videoId}/play_720p.mp4`;
+    const hlsUrl = `https://${BUNNY_CDN_HOST}/${videoId}/playlist.m3u8`;
+    const thumbnailUrl = `https://${BUNNY_CDN_HOST}/${videoId}/thumbnail.jpg`;
+
+    console.log(`[BUNNY STREAM TUS] Generated upload token for video "${title}" (GUID: ${videoId})`);
+
+    return res.json({
+      success: true,
+      libraryId: BUNNY_LIBRARY_ID,
+      videoId,
+      expiration,
+      signature,
+      tusEndpoint: 'https://video.bunnycdn.com/tusupload',
+      embedUrl,
+      directPlayUrl,
+      hlsUrl,
+      thumbnailUrl,
+      title
+    });
+  } catch (err) {
+    console.error('❌ [BUNNY STREAM TUS] Token generation error:', err);
+    return res.status(500).json({ error: 'Failed to generate Bunny upload token', details: err.message });
+  }
+});
+
 app.post('/api/upload/video', upload.single('video'), async (req, res) => {
   try {
     if (!req.file) {
