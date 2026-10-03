@@ -604,12 +604,20 @@ const ProfileSchema = new mongoose.Schema({
   awardsCount: Number
 }, { timestamps: true, strict: false });
 
+const ActiveSessionSchema = new mongoose.Schema({
+  email: { type: String, unique: true, required: true },
+  deviceId: { type: String, required: true },
+  courseId: String,
+  lastHeartbeat: { type: Date, default: Date.now }
+}, { timestamps: true });
+
 const OrderModel = mongoose.model('Order', OrderSchema);
 const ArtworkModel = mongoose.model('Artwork', ArtworkSchema);
 const CourseModel = mongoose.model('Course', CourseSchema);
 const StudentModel = mongoose.model('Student', StudentSchema);
 const LiveStatusModel = mongoose.model('LiveStatus', LiveStatusSchema);
 const ProfileModel = mongoose.model('Profile', ProfileSchema);
+const ActiveSessionModel = mongoose.model('ActiveSession', ActiveSessionSchema);
 
 let isMongoConnected = false;
 
@@ -832,14 +840,164 @@ app.post('/api/live', async (req, res) => {
 });
 
 // ==========================================
+// 1B. SINGLE-DEVICE CONCURRENT SESSION ENFORCEMENT API
+// ==========================================
+
+// In-Memory Fast Cache for Active Sessions (Device Locking)
+const activeSessionsCache = new Map(); // email -> { deviceId, courseId, lastHeartbeat: number }
+
+// Session Heartbeat - Checks & Enforces Single Device Concurrent Access
+app.post('/api/session/heartbeat', async (req, res) => {
+  const { email, deviceId, courseId, forceTakeover } = req.body;
+  if (!email || !deviceId) {
+    return res.status(400).json({ error: 'email and deviceId are required' });
+  }
+
+  const cleanEmail = email.trim().toLowerCase();
+  const now = Date.now();
+  const SESSION_TIMEOUT_MS = 12000; // 12 seconds inactivity timeout
+
+  // 1. Check in-memory cache first for sub-millisecond response
+  let cached = activeSessionsCache.get(cleanEmail);
+
+  // If not in cache, check MongoDB Atlas
+  if (!cached && mongoose.connection.readyState === 1) {
+    try {
+      const doc = await ActiveSessionModel.findOne({ email: cleanEmail }).lean();
+      if (doc) {
+        cached = {
+          deviceId: doc.deviceId,
+          courseId: doc.courseId,
+          lastHeartbeat: new Date(doc.lastHeartbeat).getTime()
+        };
+        activeSessionsCache.set(cleanEmail, cached);
+      }
+    } catch (err) {
+      console.warn('Active session mongo check error:', err.message);
+    }
+  }
+
+  // Case A: No previous active session exists -> Grant access!
+  if (!cached) {
+    const newSession = { deviceId, courseId: courseId || '', lastHeartbeat: now };
+    activeSessionsCache.set(cleanEmail, newSession);
+
+    if (mongoose.connection.readyState === 1) {
+      ActiveSessionModel.findOneAndUpdate(
+        { email: cleanEmail },
+        { email: cleanEmail, deviceId, courseId, lastHeartbeat: new Date(now) },
+        { upsert: true }
+      ).catch(() => {});
+    }
+
+    return res.json({ allowed: true, deviceId, active: true });
+  }
+
+  // Case B: Same device continuing playback / browsing -> Refresh heartbeat!
+  if (cached.deviceId === deviceId) {
+    cached.lastHeartbeat = now;
+    if (courseId) cached.courseId = courseId;
+    activeSessionsCache.set(cleanEmail, cached);
+
+    // Persist to mongo periodically (fire-and-forget)
+    if (mongoose.connection.readyState === 1) {
+      ActiveSessionModel.updateOne(
+        { email: cleanEmail },
+        { lastHeartbeat: new Date(now), ...(courseId ? { courseId } : {}) }
+      ).catch(() => {});
+    }
+
+    return res.json({ allowed: true, deviceId, active: true });
+  }
+
+  // Case C: DIFFERENT deviceId trying to access!
+  const timeSinceLastHeartbeat = now - cached.lastHeartbeat;
+
+  // If older device hasn't pinged in > 12 seconds, or if user explicitly requested forceTakeover:
+  if (timeSinceLastHeartbeat > SESSION_TIMEOUT_MS || forceTakeover === true) {
+    console.log(`[SESSION] Device takeover for ${cleanEmail}: ${cached.deviceId} -> ${deviceId}`);
+    cached.deviceId = deviceId;
+    cached.lastHeartbeat = now;
+    if (courseId) cached.courseId = courseId;
+    activeSessionsCache.set(cleanEmail, cached);
+
+    if (mongoose.connection.readyState === 1) {
+      ActiveSessionModel.findOneAndUpdate(
+        { email: cleanEmail },
+        { email: cleanEmail, deviceId, courseId, lastHeartbeat: new Date(now) },
+        { upsert: true }
+      ).catch(() => {});
+    }
+
+    return res.json({ allowed: true, deviceId, active: true, takeover: true });
+  }
+
+  // Older device is actively watching (sent heartbeat within last 12 seconds)!
+  const secondsAgo = Math.max(1, Math.round(timeSinceLastHeartbeat / 1000));
+  return res.json({
+    allowed: false,
+    activeDeviceId: cached.deviceId,
+    secondsSinceLastActive: secondsAgo,
+    message: 'Active Session Detected: Aapka account kisi doosre device ya browser tab par live dekh raha hai. Ek samay par sirf 1 device allowed hai.'
+  });
+});
+
+// Force Session Takeover endpoint
+app.post('/api/session/takeover', async (req, res) => {
+  const { email, deviceId, courseId } = req.body;
+  if (!email || !deviceId) {
+    return res.status(400).json({ error: 'email and deviceId are required' });
+  }
+
+  const cleanEmail = email.trim().toLowerCase();
+  const now = Date.now();
+
+  activeSessionsCache.set(cleanEmail, { deviceId, courseId: courseId || '', lastHeartbeat: now });
+
+  if (mongoose.connection.readyState === 1) {
+    try {
+      await ActiveSessionModel.findOneAndUpdate(
+        { email: cleanEmail },
+        { email: cleanEmail, deviceId, courseId, lastHeartbeat: new Date(now) },
+        { upsert: true }
+      );
+    } catch (e) {}
+  }
+
+  console.log(`[SESSION] Forced takeover granted to device "${deviceId}" for ${cleanEmail}`);
+  res.json({ success: true, allowed: true, deviceId });
+});
+
+// Logout session endpoint
+app.post('/api/session/logout', async (req, res) => {
+  const { email, deviceId } = req.body;
+  if (email) {
+    const cleanEmail = email.trim().toLowerCase();
+    const cached = activeSessionsCache.get(cleanEmail);
+    if (!deviceId || (cached && cached.deviceId === deviceId)) {
+      activeSessionsCache.delete(cleanEmail);
+      if (mongoose.connection.readyState === 1) {
+        try {
+          await ActiveSessionModel.deleteOne({ email: cleanEmail });
+        } catch (e) {}
+      }
+    }
+  }
+  res.json({ success: true, message: 'Session cleared' });
+});
+
+// ==========================================
 // 2. COURSES & LECTURES API
 // ==========================================
 
 app.get('/api/courses', async (req, res) => {
   try {
+    if (mongoose.connection.readyState === 2) {
+      await mongoose.connection.asPromise().catch(() => {});
+    }
     if (mongoose.connection.readyState === 1) {
       const courses = await CourseModel.find().lean();
-      if (courses && courses.length > 0) return res.json(courses);
+      if (Array.isArray(courses)) return res.json(courses);
     }
   } catch (e) {
     console.error('Mongo courses get error:', e);
@@ -1023,7 +1181,7 @@ app.put('/api/courses/:id', async (req, res) => {
       updatedCourse = await CourseModel.findOneAndUpdate(
         { id: req.params.id },
         { ...req.body, id: req.params.id },
-        { new: true }
+        { new: true, upsert: true }
       ).lean();
     }
   } catch (e) {
@@ -1632,33 +1790,36 @@ app.post('/api/upload/video', upload.single('video'), async (req, res) => {
     const hlsUrl = `https://${BUNNY_CDN_HOST}/${videoGuid}/playlist.m3u8`;
     const thumbnailUrl = `https://${BUNNY_CDN_HOST}/${videoGuid}/thumbnail.jpg`;
 
-    // 4. Update MongoDB Profile Automatically
-    try {
-      if (mongoose.connection.readyState === 1) {
-        await ProfileModel.findOneAndUpdate(
-          { id: 'primary_profile' },
-          {
-            studioVideoUrl: embedUrl,
-            studioVideoTitle: title,
-            studioVideoPoster: thumbnailUrl,
-            updatedAt: new Date().toISOString()
-          },
-          { upsert: true }
-        );
+    // 4. Update MongoDB Profile Automatically ONLY IF requested as profile video
+    const isProfile = req.body.isProfileVideo === 'true' || req.body.isProfileVideo === true || req.body.isProfile === 'true';
+    if (isProfile) {
+      try {
+        if (mongoose.connection.readyState === 1) {
+          await ProfileModel.findOneAndUpdate(
+            { id: 'primary_profile' },
+            {
+              studioVideoUrl: embedUrl,
+              studioVideoTitle: title,
+              studioVideoPoster: thumbnailUrl,
+              updatedAt: new Date().toISOString()
+            },
+            { upsert: true }
+          );
+        }
+      } catch (dbErr) {
+        console.error('Failed to auto-update profile in mongo:', dbErr);
       }
-    } catch (dbErr) {
-      console.error('Failed to auto-update profile in mongo:', dbErr);
+
+      // Backup to local file
+      const currentProfile = readJsonFile(PROFILE_FILE, INITIAL_ARTIST_PROFILE);
+      currentProfile.studioVideoUrl = embedUrl;
+      currentProfile.studioVideoTitle = title;
+      currentProfile.studioVideoPoster = thumbnailUrl;
+      writeJsonFile(PROFILE_FILE, currentProfile);
+
+      // Broadcast live SSE update
+      broadcastUpdate('PROFILE_UPDATED', currentProfile);
     }
-
-    // Backup to local file
-    const currentProfile = readJsonFile(PROFILE_FILE, INITIAL_ARTIST_PROFILE);
-    currentProfile.studioVideoUrl = embedUrl;
-    currentProfile.studioVideoTitle = title;
-    currentProfile.studioVideoPoster = thumbnailUrl;
-    writeJsonFile(PROFILE_FILE, currentProfile);
-
-    // 5. Broadcast live SSE update
-    broadcastUpdate('PROFILE_UPDATED', currentProfile);
 
     return res.json({
       success: true,
