@@ -31,6 +31,7 @@ const COURSES_FILE = path.join(DATA_DIR, 'courses.json');
 const STUDENTS_FILE = path.join(DATA_DIR, 'students.json');
 const LIVE_STATUS_FILE = path.join(DATA_DIR, 'live_status.json');
 const PROFILE_FILE = path.join(DATA_DIR, 'profile.json');
+const USERS_FILE = path.join(DATA_DIR, 'users.json');
 
 if (!fs.existsSync(DATA_DIR)) {
   fs.mkdirSync(DATA_DIR, { recursive: true });
@@ -463,6 +464,33 @@ const INITIAL_ARTIST_PROFILE = {
   awardsCount: 12
 };
 
+const INITIAL_SEED_USERS = [
+  {
+    id: 'usr-student-demo',
+    name: 'Aarav Sharma',
+    email: 'student@kuldeepsingh.art',
+    passwordHash: 'eed2fe86b0d10b559378d714458373bde40b474cb768ac2d40ac526272e8ff0e733678fdad3b5857f442bb3e8a67f801575c514ca6442458b96d88cf4678f042',
+    passwordSalt: 'e57ce6adb0e56ad4039fd850e99b6027',
+    role: 'student',
+    enrolledCourseIds: ['course-oil-mastery', 'course-realistic-sketching'],
+    currentDeviceId: '',
+    currentSessionToken: '',
+    isBlocked: false
+  },
+  {
+    id: 'usr-collector-demo',
+    name: 'Countess Vivienne',
+    email: 'collector@kuldeepsingh.art',
+    passwordHash: 'e0c0adba5aee5bd8802d081e1ec074709c7f00ab4252cd83c70d15ef56e6427329494c0264353b22cde1d7a445568f70ba03d5d93ea673acb5a89573c5d14228',
+    passwordSalt: 'a1b2c3d4e5f60718293a4b5c6d7e8f90',
+    role: 'collector',
+    enrolledCourseIds: [],
+    currentDeviceId: '',
+    currentSessionToken: '',
+    isBlocked: false
+  }
+];
+
 // -------------------------------------------------------------
 // READ / WRITE FILE HELPERS (Resilient Fallback & Local Backup)
 // -------------------------------------------------------------
@@ -611,6 +639,37 @@ const ActiveSessionSchema = new mongoose.Schema({
   lastHeartbeat: { type: Date, default: Date.now }
 }, { timestamps: true });
 
+const UserSchema = new mongoose.Schema({
+  id: { type: String, unique: true, required: true },
+  name: { type: String, required: true },
+  email: { type: String, unique: true, required: true, lowercase: true, trim: true },
+  passwordHash: { type: String, required: true },
+  passwordSalt: { type: String, required: true },
+  role: { type: String, enum: ['student', 'collector', 'admin'], default: 'student' },
+  enrolledCourseIds: { type: [String], default: [] },
+  currentDeviceId: { type: String, default: '' },
+  currentSessionToken: { type: String, default: '' },
+  lastLoginAt: { type: Date, default: Date.now },
+  lastHeartbeatAt: { type: Date, default: Date.now },
+  isBlocked: { type: Boolean, default: false }
+}, { timestamps: true, strict: false });
+
+function hashPassword(password, salt) {
+  if (!salt) salt = crypto.randomBytes(16).toString('hex');
+  const hash = crypto.pbkdf2Sync(password, salt, 1000, 64, 'sha512').toString('hex');
+  return { hash, salt };
+}
+
+function verifyPassword(password, hash, salt) {
+  try {
+    if (!password || !hash || !salt) return false;
+    const checkHash = crypto.pbkdf2Sync(password, salt, 1000, 64, 'sha512').toString('hex');
+    return checkHash === hash;
+  } catch {
+    return false;
+  }
+}
+
 const OrderModel = mongoose.model('Order', OrderSchema);
 const ArtworkModel = mongoose.model('Artwork', ArtworkSchema);
 const CourseModel = mongoose.model('Course', CourseSchema);
@@ -618,6 +677,7 @@ const StudentModel = mongoose.model('Student', StudentSchema);
 const LiveStatusModel = mongoose.model('LiveStatus', LiveStatusSchema);
 const ProfileModel = mongoose.model('Profile', ProfileSchema);
 const ActiveSessionModel = mongoose.model('ActiveSession', ActiveSessionSchema);
+const UserModel = mongoose.model('User', UserSchema);
 
 let isMongoConnected = false;
 
@@ -677,6 +737,16 @@ async function initMongoDB() {
       const existingProfile = readJsonFile(PROFILE_FILE, INITIAL_ARTIST_PROFILE);
       await ProfileModel.create(existingProfile);
       console.log('[BACKEND] Seeded Artist Profile into MongoDB Atlas');
+    }
+
+    // Auto-seed Users if collection is empty
+    const userCount = await UserModel.countDocuments();
+    if (userCount === 0) {
+      const existingUsers = readJsonFile(USERS_FILE, INITIAL_SEED_USERS);
+      if (existingUsers.length > 0) {
+        await UserModel.insertMany(existingUsers);
+        console.log(`[BACKEND] Seeded ${existingUsers.length} users into MongoDB Atlas`);
+      }
     }
   } catch (err) {
     isMongoConnected = false;
@@ -840,15 +910,253 @@ app.post('/api/live', async (req, res) => {
 });
 
 // ==========================================
-// 1B. SINGLE-DEVICE CONCURRENT SESSION ENFORCEMENT API
+// 1B. USER AUTHENTICATION & SINGLE-DEVICE SESSION API
 // ==========================================
 
 // In-Memory Fast Cache for Active Sessions (Device Locking)
-const activeSessionsCache = new Map(); // email -> { deviceId, courseId, lastHeartbeat: number }
+// email -> { deviceId, sessionToken, courseId, lastHeartbeat: number }
+const activeSessionsCache = new Map();
 
-// Session Heartbeat - Checks & Enforces Single Device Concurrent Access
+// Helper to find a user by email (MongoDB Atlas with fallback to users.json)
+async function findUserByEmail(email) {
+  const cleanEmail = (email || '').trim().toLowerCase();
+  if (mongoose.connection.readyState === 1) {
+    try {
+      const user = await UserModel.findOne({ email: cleanEmail }).lean();
+      if (user) return user;
+    } catch (err) {
+      console.warn('Mongo find user error:', err.message);
+    }
+  }
+  const localUsers = readJsonFile(USERS_FILE, INITIAL_SEED_USERS);
+  return localUsers.find(u => u.email.toLowerCase() === cleanEmail) || null;
+}
+
+// 1. REGISTER NEW USER (Strict Duplicate Prevention)
+app.post('/api/auth/register', async (req, res) => {
+  try {
+    const { email, password, name, role = 'student', deviceId } = req.body;
+    const cleanEmail = (email || '').trim().toLowerCase();
+    const cleanPassword = (password || '').trim();
+    const cleanName = (name || '').trim() || (role === 'collector' ? 'Art Collector' : 'Academy Scholar');
+
+    if (!cleanEmail || !cleanEmail.includes('@')) {
+      return res.status(400).json({ success: false, error: 'Kripya ek valid email address enter karein.' });
+    }
+    if (!cleanPassword || cleanPassword.length < 6) {
+      return res.status(400).json({ success: false, error: 'Password kam se kam 6 characters ka hona chahiye.' });
+    }
+
+    // STRICT CHECK: Verify if email is already registered
+    const existingUser = await findUserByEmail(cleanEmail);
+    if (existingUser) {
+      return res.status(400).json({
+        success: false,
+        error: 'Yeh email address pehle se registered hai! Kripya "Sign In" option chunein aur apna password dalein.'
+      });
+    }
+
+    // Hash password with salt
+    const { hash, salt } = hashPassword(cleanPassword);
+    const sessionToken = crypto.randomUUID ? crypto.randomUUID() : `sess_${Date.now()}_${crypto.randomBytes(8).toString('hex')}`;
+    const newDeviceId = deviceId || `dev_${Date.now()}`;
+
+    // Cross-check if admin has already enrolled this email in any course in students list
+    const allStudents = readJsonFile(STUDENTS_FILE, INITIAL_SEED_STUDENTS);
+    const preEnrolled = allStudents.filter(s => s.email.toLowerCase() === cleanEmail);
+    const enrolledIds = preEnrolled.map(s => s.courseId);
+
+    const newUser = {
+      id: `usr_${Date.now()}`,
+      name: cleanName,
+      email: cleanEmail,
+      passwordHash: hash,
+      passwordSalt: salt,
+      role: role === 'collector' ? 'collector' : 'student',
+      enrolledCourseIds: enrolledIds,
+      currentDeviceId: newDeviceId,
+      currentSessionToken: sessionToken,
+      lastLoginAt: new Date(),
+      lastHeartbeatAt: new Date(),
+      isBlocked: false
+    };
+
+    if (mongoose.connection.readyState === 1) {
+      await UserModel.create(newUser);
+    }
+
+    const localUsers = readJsonFile(USERS_FILE, INITIAL_SEED_USERS);
+    localUsers.unshift(newUser);
+    writeJsonFile(USERS_FILE, localUsers);
+
+    // Set active session in memory
+    activeSessionsCache.set(cleanEmail, {
+      deviceId: newDeviceId,
+      sessionToken,
+      courseId: enrolledIds[0] || '',
+      lastHeartbeat: Date.now()
+    });
+
+    console.log(`[AUTH] New User Registered: ${cleanEmail} (${newUser.role})`);
+    res.status(201).json({
+      success: true,
+      user: {
+        id: newUser.id,
+        name: newUser.name,
+        email: newUser.email,
+        role: newUser.role,
+        enrolledCourseIds: newUser.enrolledCourseIds,
+        sessionToken: sessionToken,
+        deviceId: newDeviceId
+      }
+    });
+  } catch (err) {
+    console.error('Registration error:', err);
+    res.status(500).json({ success: false, error: 'Registration failed. Kripya punah prayas karein.' });
+  }
+});
+
+// 2. LOGIN USER (Strict Password Verification + Single Device Locking)
+app.post('/api/auth/login', async (req, res) => {
+  try {
+    const { email, password, deviceId } = req.body;
+    const cleanEmail = (email || '').trim().toLowerCase();
+    const cleanPassword = (password || '').trim();
+
+    if (!cleanEmail || !cleanPassword) {
+      return res.status(400).json({ success: false, error: 'Email aur password dono anivarya hain.' });
+    }
+
+    const user = await findUserByEmail(cleanEmail);
+    if (!user) {
+      return res.status(401).json({
+        success: false,
+        error: 'Is email se koi account registered nahi mila. Kripya pehle "Request Access / Sign Up" karein.'
+      });
+    }
+
+    if (user.isBlocked) {
+      return res.status(403).json({
+        success: false,
+        error: 'Aapka account admin dwara suspend kiya gaya hai. Kripya studio management se sampark karein.'
+      });
+    }
+
+    // Verify Password
+    const isMatch = verifyPassword(cleanPassword, user.passwordHash, user.passwordSalt);
+    if (!isMatch) {
+      return res.status(401).json({
+        success: false,
+        error: 'Galat password! Kripya sahi password enter karein.'
+      });
+    }
+
+    // Generate BRAND NEW active session token (Invalidates ANY other logged in device / phone / laptop)
+    const sessionToken = crypto.randomUUID ? crypto.randomUUID() : `sess_${Date.now()}_${crypto.randomBytes(8).toString('hex')}`;
+    const newDeviceId = deviceId || `dev_${Date.now()}`;
+
+    // Reconcile any newly added courses from students list
+    const allStudents = readJsonFile(STUDENTS_FILE, INITIAL_SEED_STUDENTS);
+    const studentRecords = allStudents.filter(s => s.email.toLowerCase() === cleanEmail);
+    const existingIds = new Set(user.enrolledCourseIds || []);
+    studentRecords.forEach(s => existingIds.add(s.courseId));
+    const mergedCourseIds = Array.from(existingIds);
+
+    // Save session in MongoDB
+    if (mongoose.connection.readyState === 1) {
+      await UserModel.updateOne(
+        { email: cleanEmail },
+        {
+          currentSessionToken: sessionToken,
+          currentDeviceId: newDeviceId,
+          lastLoginAt: new Date(),
+          lastHeartbeatAt: new Date(),
+          enrolledCourseIds: mergedCourseIds
+        }
+      );
+    }
+
+    // Save session in local file
+    const localUsers = readJsonFile(USERS_FILE, INITIAL_SEED_USERS);
+    const idx = localUsers.findIndex(u => u.email.toLowerCase() === cleanEmail);
+    if (idx !== -1) {
+      localUsers[idx].currentSessionToken = sessionToken;
+      localUsers[idx].currentDeviceId = newDeviceId;
+      localUsers[idx].lastLoginAt = new Date();
+      localUsers[idx].enrolledCourseIds = mergedCourseIds;
+      writeJsonFile(USERS_FILE, localUsers);
+    }
+
+    // Update in-memory active session cache (Overrides any previous device immediately)
+    activeSessionsCache.set(cleanEmail, {
+      deviceId: newDeviceId,
+      sessionToken,
+      courseId: mergedCourseIds[0] || '',
+      lastHeartbeat: Date.now()
+    });
+
+    if (mongoose.connection.readyState === 1) {
+      ActiveSessionModel.findOneAndUpdate(
+        { email: cleanEmail },
+        { email: cleanEmail, deviceId: newDeviceId, lastHeartbeat: new Date() },
+        { upsert: true }
+      ).catch(() => {});
+    }
+
+    console.log(`[AUTH] User Logged In: ${cleanEmail} on device ${newDeviceId}`);
+    res.json({
+      success: true,
+      user: {
+        id: user.id,
+        name: user.name,
+        email: user.email,
+        role: user.role,
+        enrolledCourseIds: mergedCourseIds,
+        sessionToken: sessionToken,
+        deviceId: newDeviceId
+      }
+    });
+  } catch (err) {
+    console.error('Login error:', err);
+    res.status(500).json({ success: false, error: 'Login failed. Kripya punah prayas karein.' });
+  }
+});
+
+// 3. VALIDATE ACTIVE SESSION (Called periodically or before playing media)
+app.post('/api/auth/validate-session', async (req, res) => {
+  const { email, sessionToken, deviceId } = req.body;
+  if (!email || !sessionToken) {
+    return res.status(400).json({ valid: false, error: 'email and sessionToken are required' });
+  }
+
+  const cleanEmail = email.trim().toLowerCase();
+  const cached = activeSessionsCache.get(cleanEmail);
+
+  if (cached && cached.sessionToken && cached.sessionToken !== sessionToken) {
+    return res.json({
+      valid: false,
+      kickedOut: true,
+      reason: 'SESSION_SUPERSEDED',
+      message: 'Security Alert: Aapka account kisi doosre device (phone/laptop) par login kar liya gaya hai. Ek samay par sirf 1 device allowed hai.'
+    });
+  }
+
+  const user = await findUserByEmail(cleanEmail);
+  if (!user || (user.currentSessionToken && user.currentSessionToken !== sessionToken)) {
+    return res.json({
+      valid: false,
+      kickedOut: true,
+      reason: 'SESSION_EXPIRED_OR_SUPERSEDED',
+      message: 'Security Alert: Aapka session doosre device par switch ho gaya hai. Suraksha ke liye is device ko logout kar diya gaya hai.'
+    });
+  }
+
+  res.json({ valid: true });
+});
+
+// 4. SESSION HEARTBEAT (Enforces Single Active Device in Real-Time)
 app.post('/api/session/heartbeat', async (req, res) => {
-  const { email, deviceId, courseId, forceTakeover } = req.body;
+  const { email, deviceId, sessionToken, courseId, forceTakeover } = req.body;
   if (!email || !deviceId) {
     return res.status(400).json({ error: 'email and deviceId are required' });
   }
@@ -857,16 +1165,17 @@ app.post('/api/session/heartbeat', async (req, res) => {
   const now = Date.now();
   const SESSION_TIMEOUT_MS = 12000; // 12 seconds inactivity timeout
 
-  // 1. Check in-memory cache first for sub-millisecond response
+  // Check in-memory cache first
   let cached = activeSessionsCache.get(cleanEmail);
 
-  // If not in cache, check MongoDB Atlas
+  // If not in cache, check Mongo
   if (!cached && mongoose.connection.readyState === 1) {
     try {
       const doc = await ActiveSessionModel.findOne({ email: cleanEmail }).lean();
       if (doc) {
         cached = {
           deviceId: doc.deviceId,
+          sessionToken: '',
           courseId: doc.courseId,
           lastHeartbeat: new Date(doc.lastHeartbeat).getTime()
         };
@@ -877,9 +1186,19 @@ app.post('/api/session/heartbeat', async (req, res) => {
     }
   }
 
+  // If user has a sessionToken, check against active sessionToken
+  if (sessionToken && cached && cached.sessionToken && cached.sessionToken !== sessionToken) {
+    return res.json({
+      allowed: false,
+      kickedOut: true,
+      reason: 'SESSION_SUPERSEDED',
+      message: 'Security Alert: Aapka account kisi doosre device (phone/laptop) par log in ho gaya hai. Ek samay par sirf 1 device par streaming allowed hai.'
+    });
+  }
+
   // Case A: No previous active session exists -> Grant access!
   if (!cached) {
-    const newSession = { deviceId, courseId: courseId || '', lastHeartbeat: now };
+    const newSession = { deviceId, sessionToken: sessionToken || '', courseId: courseId || '', lastHeartbeat: now };
     activeSessionsCache.set(cleanEmail, newSession);
 
     if (mongoose.connection.readyState === 1) {
@@ -896,10 +1215,10 @@ app.post('/api/session/heartbeat', async (req, res) => {
   // Case B: Same device continuing playback / browsing -> Refresh heartbeat!
   if (cached.deviceId === deviceId) {
     cached.lastHeartbeat = now;
+    if (sessionToken) cached.sessionToken = sessionToken;
     if (courseId) cached.courseId = courseId;
     activeSessionsCache.set(cleanEmail, cached);
 
-    // Persist to mongo periodically (fire-and-forget)
     if (mongoose.connection.readyState === 1) {
       ActiveSessionModel.updateOne(
         { email: cleanEmail },
@@ -917,6 +1236,7 @@ app.post('/api/session/heartbeat', async (req, res) => {
   if (timeSinceLastHeartbeat > SESSION_TIMEOUT_MS || forceTakeover === true) {
     console.log(`[SESSION] Device takeover for ${cleanEmail}: ${cached.deviceId} -> ${deviceId}`);
     cached.deviceId = deviceId;
+    if (sessionToken) cached.sessionToken = sessionToken;
     cached.lastHeartbeat = now;
     if (courseId) cached.courseId = courseId;
     activeSessionsCache.set(cleanEmail, cached);
@@ -932,19 +1252,20 @@ app.post('/api/session/heartbeat', async (req, res) => {
     return res.json({ allowed: true, deviceId, active: true, takeover: true });
   }
 
-  // Older device is actively watching (sent heartbeat within last 12 seconds)!
+  // Older device is actively watching!
   const secondsAgo = Math.max(1, Math.round(timeSinceLastHeartbeat / 1000));
   return res.json({
     allowed: false,
+    kickedOut: false,
     activeDeviceId: cached.deviceId,
     secondsSinceLastActive: secondsAgo,
-    message: 'Active Session Detected: Aapka account kisi doosre device ya browser tab par live dekh raha hai. Ek samay par sirf 1 device allowed hai.'
+    message: 'Active Session Detected: Aapka account kisi doosre device (phone/laptop) par live dekh raha hai. Ek samay par sirf 1 device par class dekhna allowed hai.'
   });
 });
 
 // Force Session Takeover endpoint
 app.post('/api/session/takeover', async (req, res) => {
-  const { email, deviceId, courseId } = req.body;
+  const { email, deviceId, sessionToken, courseId } = req.body;
   if (!email || !deviceId) {
     return res.status(400).json({ error: 'email and deviceId are required' });
   }
@@ -952,7 +1273,12 @@ app.post('/api/session/takeover', async (req, res) => {
   const cleanEmail = email.trim().toLowerCase();
   const now = Date.now();
 
-  activeSessionsCache.set(cleanEmail, { deviceId, courseId: courseId || '', lastHeartbeat: now });
+  activeSessionsCache.set(cleanEmail, {
+    deviceId,
+    sessionToken: sessionToken || '',
+    courseId: courseId || '',
+    lastHeartbeat: now
+  });
 
   if (mongoose.connection.readyState === 1) {
     try {
