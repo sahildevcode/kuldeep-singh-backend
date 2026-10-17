@@ -2459,9 +2459,9 @@ const upload = multer({
   limits: { fileSize: 500 * 1024 * 1024 } // 500 MB max
 });
 
-const BUNNY_LIBRARY_ID = process.env.BUNNY_STREAM_LIBRARY_ID || '765702';
-const BUNNY_API_KEY = process.env.BUNNY_STREAM_API_KEY || 'baefbf98-2a8c-46d2-a6e5a219a81c-699b-4f46';
-const BUNNY_CDN_HOST = process.env.BUNNY_CDN_HOST || 'vz-0cb43856-2c7.b-cdn.net';
+const BUNNY_LIBRARY_ID = process.env.BUNNY_STREAM_LIBRARY_ID || '782211';
+const BUNNY_API_KEY = process.env.BUNNY_STREAM_API_KEY || 'c31e8e4b-c1e4-47fc-a0041c72bebc-c8f5-4ead';
+const BUNNY_CDN_HOST = process.env.BUNNY_CDN_HOST || 'vz-bb84e70d-4d1.b-cdn.net';
 
 // Direct Bunny Stream TUS Upload Auth Endpoint (Handles 2GB+ High Speed Browser Uploads Directly to Bunny.net)
 app.post('/api/upload/bunny-token', async (req, res) => {
