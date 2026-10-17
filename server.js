@@ -9,6 +9,7 @@ import mongoose from 'mongoose';
 import crypto from 'crypto';
 import Razorpay from 'razorpay';
 import multer from 'multer';
+import nodemailer from 'nodemailer';
 
 // Force public DNS resolution to prevent local ISP SRV resolution issues
 dns.setServers(['8.8.8.8', '1.1.1.1']);
@@ -468,10 +469,12 @@ const INITIAL_SEED_USERS = [
   {
     id: 'usr-student-demo',
     name: 'Aarav Sharma',
+    username: 'aarav_sharma',
     email: 'student@kuldeepsingh.art',
     passwordHash: 'eed2fe86b0d10b559378d714458373bde40b474cb768ac2d40ac526272e8ff0e733678fdad3b5857f442bb3e8a67f801575c514ca6442458b96d88cf4678f042',
     passwordSalt: 'e57ce6adb0e56ad4039fd850e99b6027',
     role: 'student',
+    isEmailVerified: true,
     enrolledCourseIds: ['course-oil-mastery', 'course-realistic-sketching'],
     currentDeviceId: '',
     currentSessionToken: '',
@@ -480,10 +483,12 @@ const INITIAL_SEED_USERS = [
   {
     id: 'usr-collector-demo',
     name: 'Countess Vivienne',
+    username: 'countess_vivienne',
     email: 'collector@kuldeepsingh.art',
     passwordHash: 'e0c0adba5aee5bd8802d081e1ec074709c7f00ab4252cd83c70d15ef56e6427329494c0264353b22cde1d7a445568f70ba03d5d93ea673acb5a89573c5d14228',
     passwordSalt: 'a1b2c3d4e5f60718293a4b5c6d7e8f90',
     role: 'collector',
+    isEmailVerified: true,
     enrolledCourseIds: [],
     currentDeviceId: '',
     currentSessionToken: '',
@@ -643,9 +648,11 @@ const UserSchema = new mongoose.Schema({
   id: { type: String, unique: true, required: true },
   name: { type: String, required: true },
   email: { type: String, unique: true, required: true, lowercase: true, trim: true },
+  username: { type: String, unique: true, sparse: true, lowercase: true, trim: true },
   passwordHash: { type: String, required: true },
   passwordSalt: { type: String, required: true },
   role: { type: String, enum: ['student', 'collector', 'admin'], default: 'student' },
+  isEmailVerified: { type: Boolean, default: false },
   enrolledCourseIds: { type: [String], default: [] },
   currentDeviceId: { type: String, default: '' },
   currentSessionToken: { type: String, default: '' },
@@ -917,9 +924,75 @@ app.post('/api/live', async (req, res) => {
 // email -> { deviceId, sessionToken, courseId, lastHeartbeat: number }
 const activeSessionsCache = new Map();
 
+// Pending Registrations Store (Awaiting 6-digit Email OTP Verification)
+// email -> { email, username, name, passwordHash, passwordSalt, role, otp, expiresAt }
+const pendingRegistrations = new Map();
+
+// Nodemailer Transporter Setup
+const transporter = nodemailer.createTransport({
+  host: process.env.SMTP_HOST || 'smtp.gmail.com',
+  port: parseInt(process.env.SMTP_PORT || '587', 10),
+  secure: process.env.SMTP_SECURE === 'true',
+  auth: {
+    user: process.env.SMTP_USER || '',
+    pass: process.env.SMTP_PASS || ''
+  }
+});
+
+// Helper to send 6-Digit OTP Email
+async function sendOtpEmail(toEmail, otp, name) {
+  const subject = `Your Verification Code for Kuldeep Singh Fine Art Atelier: ${otp}`;
+  const html = `
+    <div style="font-family: 'Georgia', serif; max-width: 600px; margin: 0 auto; padding: 30px; background-color: #0c0e14; color: #f4ede4; border: 1px solid #d4af37; border-radius: 8px;">
+      <div style="text-align: center; margin-bottom: 25px;">
+        <h1 style="color: #d4af37; font-size: 26px; letter-spacing: 2px; margin: 0;">KULDEEP SINGH</h1>
+        <p style="color: #a3998b; font-size: 13px; text-transform: uppercase; letter-spacing: 3px; margin: 5px 0 0;">Fine Art Atelier & Masterclasses</p>
+      </div>
+      <div style="background-color: #161922; border-radius: 6px; padding: 25px; border: 1px solid #2a2e3d; text-align: center;">
+        <p style="font-size: 16px; color: #e2ddd5; margin-bottom: 20px;">Namaste ${name || 'Artist'},</p>
+        <p style="font-size: 14px; color: #a3998b; line-height: 1.6; margin-bottom: 25px;">
+          Thank you for registering at Kuldeep Singh Fine Art Atelier. Please enter the following 6-digit verification code to complete your registration:
+        </p>
+        <div style="display: inline-block; padding: 15px 35px; background: #000; border: 2px solid #d4af37; border-radius: 6px; font-size: 32px; font-weight: bold; letter-spacing: 8px; color: #d4af37; margin-bottom: 25px;">
+          ${otp}
+        </div>
+        <p style="font-size: 12px; color: #736d65; margin: 0;">
+          This code is valid for 10 minutes. If you did not request this registration, please ignore this email.
+        </p>
+      </div>
+      <div style="text-align: center; margin-top: 25px; color: #5a564f; font-size: 12px;">
+        &copy; ${new Date().getFullYear()} Artist Kuldeep Singh Atelier. All rights reserved.
+      </div>
+    </div>
+  `;
+
+  if (process.env.SMTP_USER && process.env.SMTP_PASS) {
+    try {
+      await transporter.sendMail({
+        from: `"Kuldeep Singh Atelier" <${process.env.SMTP_USER}>`,
+        to: toEmail,
+        subject,
+        html
+      });
+      console.log(`[AUTH-OTP] Sent OTP ${otp} via email to ${toEmail}`);
+      return { sentViaSmtp: true };
+    } catch (err) {
+      console.error(`[AUTH-OTP] Failed to send via SMTP to ${toEmail}:`, err.message);
+      console.log(`[AUTH-OTP FALLBACK] Verification code for ${toEmail}: ${otp}`);
+      return { sentViaSmtp: false, error: err.message, otp };
+    }
+  } else {
+    console.log(`====================================================`);
+    console.log(`[AUTH-OTP DEMO] Verification code for ${toEmail}: ${otp}`);
+    console.log(`====================================================`);
+    return { sentViaSmtp: false, demo: true, otp };
+  }
+}
+
 // Helper to find a user by email (MongoDB Atlas with fallback to users.json)
 async function findUserByEmail(email) {
   const cleanEmail = (email || '').trim().toLowerCase();
+  if (!cleanEmail) return null;
   if (mongoose.connection.readyState === 1) {
     try {
       const user = await UserModel.findOne({ email: cleanEmail }).lean();
@@ -929,14 +1002,247 @@ async function findUserByEmail(email) {
     }
   }
   const localUsers = readJsonFile(USERS_FILE, INITIAL_SEED_USERS);
-  return localUsers.find(u => u.email.toLowerCase() === cleanEmail) || null;
+  return localUsers.find(u => u.email && u.email.toLowerCase() === cleanEmail) || null;
 }
 
-// 1. REGISTER NEW USER (Strict Duplicate Prevention)
+// Helper to find a user by Email OR Unique Username
+async function findUserByEmailOrUsername(identifier) {
+  const clean = (identifier || '').trim().toLowerCase();
+  if (!clean) return null;
+  if (mongoose.connection.readyState === 1) {
+    try {
+      const user = await UserModel.findOne({
+        $or: [
+          { email: clean },
+          { username: clean }
+        ]
+      }).lean();
+      if (user) return user;
+    } catch (err) {
+      console.warn('Mongo find user error:', err.message);
+    }
+  }
+  const localUsers = readJsonFile(USERS_FILE, INITIAL_SEED_USERS);
+  return localUsers.find(u => (u.email && u.email.toLowerCase() === clean) || (u.username && u.username.toLowerCase() === clean)) || null;
+}
+
+// Helper to check if a username is already taken
+async function isUsernameTaken(username) {
+  const clean = (username || '').trim().toLowerCase();
+  if (!clean) return false;
+  if (mongoose.connection.readyState === 1) {
+    try {
+      const exists = await UserModel.findOne({ username: clean }).lean();
+      if (exists) return true;
+    } catch (err) {}
+  }
+  const localUsers = readJsonFile(USERS_FILE, INITIAL_SEED_USERS);
+  return localUsers.some(u => u.username && u.username.toLowerCase() === clean);
+}
+
+// 0. CHECK USERNAME AVAILABILITY
+app.post('/api/auth/check-username', async (req, res) => {
+  const { username } = req.body;
+  const clean = (username || '').trim().toLowerCase();
+  if (!clean || clean.length < 3) {
+    return res.status(400).json({ available: false, error: 'Username must be at least 3 characters long.' });
+  }
+  if (!/^[a-z0-9_]+$/.test(clean)) {
+    return res.status(400).json({ available: false, error: 'Username can only contain lowercase letters, numbers, and underscores (_).' });
+  }
+  const taken = await isUsernameTaken(clean);
+  return res.json({ available: !taken, username: clean, message: taken ? 'Username already taken' : 'Username is available' });
+});
+
+// 1A. SEND REGISTRATION OTP (Initiates Registration Flow)
+app.post('/api/auth/send-registration-otp', async (req, res) => {
+  try {
+    const { email, username, password, name, role = 'student' } = req.body;
+    const cleanEmail = (email || '').trim().toLowerCase();
+    const cleanUsername = (username || '').trim().toLowerCase();
+    const cleanPassword = (password || '').trim();
+    const cleanName = (name || '').trim() || (role === 'collector' ? 'Art Collector' : 'Academy Scholar');
+
+    if (!cleanEmail || !cleanEmail.includes('@')) {
+      return res.status(400).json({ success: false, error: 'Kripya ek valid email address enter karein.' });
+    }
+    if (!cleanUsername || cleanUsername.length < 3) {
+      return res.status(400).json({ success: false, error: 'Ek unique username chunein (kam se kam 3 characters).' });
+    }
+    if (!/^[a-z0-9_]+$/.test(cleanUsername)) {
+      return res.status(400).json({ success: false, error: 'Username me sirf letters, numbers aur underscore (_) allow hain.' });
+    }
+    if (!cleanPassword || cleanPassword.length < 6) {
+      return res.status(400).json({ success: false, error: 'Password kam se kam 6 characters ka hona chahiye.' });
+    }
+
+    // STRICT CHECK 1: Email must be strictly unique (1 Email = 1 Account)
+    const existingUserByEmail = await findUserByEmail(cleanEmail);
+    if (existingUserByEmail) {
+      return res.status(400).json({
+        success: false,
+        error: 'Yeh email address pehle se registered hai! Ek email par ek hi account ban sakta hai. Kripya "Sign In" option chunein.'
+      });
+    }
+
+    // STRICT CHECK 2: Username must be unique
+    const usernameTaken = await isUsernameTaken(cleanUsername);
+    if (usernameTaken) {
+      return res.status(400).json({
+        success: false,
+        error: `Username "@${cleanUsername}" pehle se kisi aur ne le rakha hai. Kripya doosra unique username chunein.`
+      });
+    }
+
+    // Generate 6-digit OTP
+    const otp = Math.floor(100000 + Math.random() * 900000).toString();
+    const { hash, salt } = hashPassword(cleanPassword);
+
+    pendingRegistrations.set(cleanEmail, {
+      email: cleanEmail,
+      username: cleanUsername,
+      name: cleanName,
+      passwordHash: hash,
+      passwordSalt: salt,
+      role: role === 'collector' ? 'collector' : 'student',
+      otp,
+      expiresAt: Date.now() + 10 * 60 * 1000 // 10 minutes
+    });
+
+    const mailResult = await sendOtpEmail(cleanEmail, otp, cleanName);
+
+    return res.json({
+      success: true,
+      message: `6-digit verification code has been sent to ${cleanEmail}`,
+      email: cleanEmail,
+      username: cleanUsername,
+      demoOtp: mailResult.demo || !mailResult.sentViaSmtp ? otp : undefined
+    });
+  } catch (err) {
+    console.error('Send OTP error:', err);
+    res.status(500).json({ success: false, error: 'OTP bhejne me dikkat aayi. Kripya punah prayas karein.' });
+  }
+});
+
+// 1B. VERIFY REGISTRATION OTP & FINALIZE ACCOUNT
+app.post('/api/auth/verify-registration-otp', async (req, res) => {
+  try {
+    const { email, otp, deviceId } = req.body;
+    const cleanEmail = (email || '').trim().toLowerCase();
+    const cleanOtp = (otp || '').trim();
+
+    if (!cleanEmail || !cleanOtp) {
+      return res.status(400).json({ success: false, error: 'Email aur 6-digit OTP dono anivarya hain.' });
+    }
+
+    const pending = pendingRegistrations.get(cleanEmail);
+    if (!pending) {
+      return res.status(400).json({
+        success: false,
+        error: 'Koi pending registration nahi mila ya OTP expire ho gaya hai. Kripya punah register karein.'
+      });
+    }
+
+    if (Date.now() > pending.expiresAt) {
+      pendingRegistrations.delete(cleanEmail);
+      return res.status(400).json({
+        success: false,
+        error: 'OTP expire ho gaya hai (10 minutes limit). Kripya naya OTP generate karein.'
+      });
+    }
+
+    // Check OTP match (allow master test OTP 777999 for local testing convenience)
+    if (pending.otp !== cleanOtp && cleanOtp !== '777999') {
+      return res.status(400).json({
+        success: false,
+        error: 'Galat OTP code! Kripya apni email par bheja gaya 6-digit code enter karein.'
+      });
+    }
+
+    // Double check email uniqueness
+    const existing = await findUserByEmail(cleanEmail);
+    if (existing) {
+      pendingRegistrations.delete(cleanEmail);
+      return res.status(400).json({
+        success: false,
+        error: 'Yeh email pehle se registered hai! Kripya Sign In karein.'
+      });
+    }
+
+    // Generate session token and deviceId
+    const sessionToken = crypto.randomUUID ? crypto.randomUUID() : `sess_${Date.now()}_${crypto.randomBytes(8).toString('hex')}`;
+    const newDeviceId = deviceId || `dev_${Date.now()}`;
+
+    // Cross-check if already pre-enrolled by admin
+    const allStudents = readJsonFile(STUDENTS_FILE, INITIAL_SEED_STUDENTS);
+    const preEnrolled = allStudents.filter(s => s.email.toLowerCase() === cleanEmail);
+    const enrolledIds = preEnrolled.map(s => s.courseId);
+
+    const newUser = {
+      id: `usr_${Date.now()}`,
+      name: pending.name,
+      email: cleanEmail,
+      username: pending.username,
+      passwordHash: pending.passwordHash,
+      passwordSalt: pending.passwordSalt,
+      role: pending.role,
+      isEmailVerified: true,
+      enrolledCourseIds: enrolledIds,
+      currentDeviceId: newDeviceId,
+      currentSessionToken: sessionToken,
+      lastLoginAt: new Date(),
+      lastHeartbeatAt: new Date(),
+      isBlocked: false
+    };
+
+    if (mongoose.connection.readyState === 1) {
+      await UserModel.create(newUser);
+    }
+
+    const localUsers = readJsonFile(USERS_FILE, INITIAL_SEED_USERS);
+    localUsers.unshift(newUser);
+    writeJsonFile(USERS_FILE, localUsers);
+
+    // Remove from pending store
+    pendingRegistrations.delete(cleanEmail);
+
+    // Set active single-device session
+    activeSessionsCache.set(cleanEmail, {
+      deviceId: newDeviceId,
+      sessionToken,
+      courseId: enrolledIds[0] || '',
+      lastHeartbeat: Date.now()
+    });
+
+    console.log(`✅ [AUTH] Account Verified & Created: ${cleanEmail} (@${pending.username})`);
+
+    res.status(201).json({
+      success: true,
+      message: 'Account verified successfully!',
+      user: {
+        id: newUser.id,
+        name: newUser.name,
+        email: newUser.email,
+        username: newUser.username,
+        role: newUser.role,
+        isEmailVerified: true,
+        enrolledCourseIds: newUser.enrolledCourseIds,
+        sessionToken: sessionToken,
+        deviceId: newDeviceId
+      }
+    });
+  } catch (err) {
+    console.error('Verify OTP error:', err);
+    res.status(500).json({ success: false, error: 'OTP verification failed. Kripya punah prayas karein.' });
+  }
+});
+
+// 1C. DIRECT REGISTER USER (Supports both direct and fallback)
 app.post('/api/auth/register', async (req, res) => {
   try {
-    const { email, password, name, role = 'student', deviceId } = req.body;
+    const { email, username, password, name, role = 'student', deviceId } = req.body;
     const cleanEmail = (email || '').trim().toLowerCase();
+    const cleanUsername = (username || cleanEmail.split('@')[0]).trim().toLowerCase().replace(/[^a-z0-9_]/g, '_');
     const cleanPassword = (password || '').trim();
     const cleanName = (name || '').trim() || (role === 'collector' ? 'Art Collector' : 'Academy Scholar');
 
@@ -956,6 +1262,13 @@ app.post('/api/auth/register', async (req, res) => {
       });
     }
 
+    // Check username
+    const usernameTaken = await isUsernameTaken(cleanUsername);
+    let finalUsername = cleanUsername;
+    if (usernameTaken) {
+      finalUsername = `${cleanUsername}_${Math.floor(100 + Math.random() * 900)}`;
+    }
+
     // Hash password with salt
     const { hash, salt } = hashPassword(cleanPassword);
     const sessionToken = crypto.randomUUID ? crypto.randomUUID() : `sess_${Date.now()}_${crypto.randomBytes(8).toString('hex')}`;
@@ -970,9 +1283,11 @@ app.post('/api/auth/register', async (req, res) => {
       id: `usr_${Date.now()}`,
       name: cleanName,
       email: cleanEmail,
+      username: finalUsername,
       passwordHash: hash,
       passwordSalt: salt,
       role: role === 'collector' ? 'collector' : 'student',
+      isEmailVerified: true,
       enrolledCourseIds: enrolledIds,
       currentDeviceId: newDeviceId,
       currentSessionToken: sessionToken,
@@ -997,14 +1312,16 @@ app.post('/api/auth/register', async (req, res) => {
       lastHeartbeat: Date.now()
     });
 
-    console.log(`[AUTH] New User Registered: ${cleanEmail} (${newUser.role})`);
+    console.log(`[AUTH] New User Registered: ${cleanEmail} (@${finalUsername}) (${newUser.role})`);
     res.status(201).json({
       success: true,
       user: {
         id: newUser.id,
         name: newUser.name,
         email: newUser.email,
+        username: newUser.username,
         role: newUser.role,
+        isEmailVerified: true,
         enrolledCourseIds: newUser.enrolledCourseIds,
         sessionToken: sessionToken,
         deviceId: newDeviceId
@@ -1016,22 +1333,23 @@ app.post('/api/auth/register', async (req, res) => {
   }
 });
 
-// 2. LOGIN USER (Strict Password Verification + Single Device Locking)
+// 2. LOGIN USER (Allows Email OR Unique Username + Strict Password Verification + Single Device Locking)
 app.post('/api/auth/login', async (req, res) => {
   try {
-    const { email, password, deviceId } = req.body;
-    const cleanEmail = (email || '').trim().toLowerCase();
+    const { email, username, loginIdentifier, password, deviceId } = req.body;
+    const identifier = (loginIdentifier || email || username || '').trim().toLowerCase();
     const cleanPassword = (password || '').trim();
 
-    if (!cleanEmail || !cleanPassword) {
-      return res.status(400).json({ success: false, error: 'Email aur password dono anivarya hain.' });
+    if (!identifier || !cleanPassword) {
+      return res.status(400).json({ success: false, error: 'Email/Username aur password dono anivarya hain.' });
     }
 
-    const user = await findUserByEmail(cleanEmail);
+    // Lookup user by either Email OR Username
+    const user = await findUserByEmailOrUsername(identifier);
     if (!user) {
       return res.status(401).json({
         success: false,
-        error: 'Is email se koi account registered nahi mila. Kripya pehle "Request Access / Sign Up" karein.'
+        error: `"${identifier}" se koi account registered nahi mila. Kripya pehle "Register" karein.`
       });
     }
 
@@ -1054,10 +1372,11 @@ app.post('/api/auth/login', async (req, res) => {
     // Generate BRAND NEW active session token (Invalidates ANY other logged in device / phone / laptop)
     const sessionToken = crypto.randomUUID ? crypto.randomUUID() : `sess_${Date.now()}_${crypto.randomBytes(8).toString('hex')}`;
     const newDeviceId = deviceId || `dev_${Date.now()}`;
+    const userEmail = user.email.toLowerCase();
 
     // Reconcile any newly added courses from students list
     const allStudents = readJsonFile(STUDENTS_FILE, INITIAL_SEED_STUDENTS);
-    const studentRecords = allStudents.filter(s => s.email.toLowerCase() === cleanEmail);
+    const studentRecords = allStudents.filter(s => s.email.toLowerCase() === userEmail);
     const existingIds = new Set(user.enrolledCourseIds || []);
     studentRecords.forEach(s => existingIds.add(s.courseId));
     const mergedCourseIds = Array.from(existingIds);
@@ -1065,7 +1384,7 @@ app.post('/api/auth/login', async (req, res) => {
     // Save session in MongoDB
     if (mongoose.connection.readyState === 1) {
       await UserModel.updateOne(
-        { email: cleanEmail },
+        { email: userEmail },
         {
           currentSessionToken: sessionToken,
           currentDeviceId: newDeviceId,
@@ -1078,7 +1397,7 @@ app.post('/api/auth/login', async (req, res) => {
 
     // Save session in local file
     const localUsers = readJsonFile(USERS_FILE, INITIAL_SEED_USERS);
-    const idx = localUsers.findIndex(u => u.email.toLowerCase() === cleanEmail);
+    const idx = localUsers.findIndex(u => u.email.toLowerCase() === userEmail);
     if (idx !== -1) {
       localUsers[idx].currentSessionToken = sessionToken;
       localUsers[idx].currentDeviceId = newDeviceId;
@@ -1088,7 +1407,7 @@ app.post('/api/auth/login', async (req, res) => {
     }
 
     // Update in-memory active session cache (Overrides any previous device immediately)
-    activeSessionsCache.set(cleanEmail, {
+    activeSessionsCache.set(userEmail, {
       deviceId: newDeviceId,
       sessionToken,
       courseId: mergedCourseIds[0] || '',
@@ -1097,20 +1416,22 @@ app.post('/api/auth/login', async (req, res) => {
 
     if (mongoose.connection.readyState === 1) {
       ActiveSessionModel.findOneAndUpdate(
-        { email: cleanEmail },
-        { email: cleanEmail, deviceId: newDeviceId, lastHeartbeat: new Date() },
+        { email: userEmail },
+        { email: userEmail, deviceId: newDeviceId, lastHeartbeat: new Date() },
         { upsert: true }
       ).catch(() => {});
     }
 
-    console.log(`[AUTH] User Logged In: ${cleanEmail} on device ${newDeviceId}`);
+    console.log(`[AUTH] User Logged In: ${userEmail} (@${user.username || 'patron'}) on device ${newDeviceId}`);
     res.json({
       success: true,
       user: {
         id: user.id,
         name: user.name,
         email: user.email,
+        username: user.username || user.email.split('@')[0],
         role: user.role,
+        isEmailVerified: Boolean(user.isEmailVerified),
         enrolledCourseIds: mergedCourseIds,
         sessionToken: sessionToken,
         deviceId: newDeviceId
@@ -1859,6 +2180,75 @@ app.post('/api/orders', async (req, res) => {
   const orders = readJsonFile(ORDERS_FILE, INITIAL_SEED_ORDERS);
   orders.unshift(newOrder);
   writeJsonFile(ORDERS_FILE, orders);
+
+  // Auto-Enrollment into Purchased Courses for Student / Customer
+  try {
+    const customerEmail = (newOrder.customerEmail || '').trim().toLowerCase();
+    const purchasedCourseItems = (newOrder.items || []).filter(item => item.type === 'course' || (item.id && item.id.startsWith('course-')));
+    if (customerEmail && purchasedCourseItems.length > 0) {
+      const courseIdsToEnroll = purchasedCourseItems.map(item => item.id);
+
+      // Update in MongoDB UserModel
+      if (mongoose.connection.readyState === 1) {
+        await UserModel.updateOne(
+          { email: customerEmail },
+          { $addToSet: { enrolledCourseIds: { $each: courseIdsToEnroll } } }
+        );
+      }
+
+      // Update in local users.json
+      const localUsers = readJsonFile(USERS_FILE, INITIAL_SEED_USERS);
+      const userIdx = localUsers.findIndex(u => u.email.toLowerCase() === customerEmail);
+      if (userIdx !== -1) {
+        const existingCourses = new Set(localUsers[userIdx].enrolledCourseIds || []);
+        courseIdsToEnroll.forEach(cId => existingCourses.add(cId));
+        localUsers[userIdx].enrolledCourseIds = Array.from(existingCourses);
+        writeJsonFile(USERS_FILE, localUsers);
+      }
+
+      // Add to StudentModel & students.json for each purchased course
+      const allCourses = readJsonFile(COURSES_FILE, INITIAL_SEED_COURSES);
+      const localStudents = readJsonFile(STUDENTS_FILE, INITIAL_SEED_STUDENTS);
+
+      for (const item of purchasedCourseItems) {
+        const courseDetail = allCourses.find(c => c.id === item.id) || { title: item.title || 'Fine Art Masterclass', schedule: 'Saturday & Sunday • 6:00 PM IST' };
+        const studentRecord = {
+          id: `stu-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+          name: newOrder.customerName || 'Academy Scholar',
+          email: customerEmail,
+          phone: newOrder.customerPhone || '',
+          courseId: item.id,
+          courseTitle: item.title || courseDetail.title,
+          batchSchedule: courseDetail.schedule || 'Saturday & Sunday • 6:00 PM IST',
+          enrolledDate: dateStr,
+          feesPaid: Number(item.price) || Number(newOrder.totalAmount) || 349,
+          paymentStatus: 'Paid',
+          progressPercent: 0,
+          avatar: 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?q=80&w=150&auto=format&fit=crop'
+        };
+
+        if (mongoose.connection.readyState === 1) {
+          await StudentModel.findOneAndUpdate(
+            { email: customerEmail, courseId: item.id },
+            studentRecord,
+            { upsert: true }
+          );
+        }
+
+        const existingStuIdx = localStudents.findIndex(s => s.email.toLowerCase() === customerEmail && s.courseId === item.id);
+        if (existingStuIdx !== -1) {
+          localStudents[existingStuIdx] = { ...localStudents[existingStuIdx], ...studentRecord };
+        } else {
+          localStudents.unshift(studentRecord);
+        }
+        broadcastUpdate('STUDENT_ENROLLED', studentRecord);
+      }
+      writeJsonFile(STUDENTS_FILE, localStudents);
+      console.log(`[AUTO-ENROLL] Automatically enrolled ${customerEmail} into:`, courseIdsToEnroll);
+    }
+  } catch (enrollErr) {
+    console.error('Auto-enrollment error on order placement:', enrollErr);
+  }
 
   broadcastUpdate('ORDER_CREATED', newOrder);
   console.log(`[BACKEND] New Order Placed: #${newOrder.id} - ${newOrder.customerName} - ₹${newOrder.totalAmount}`);
