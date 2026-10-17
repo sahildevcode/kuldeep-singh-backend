@@ -2379,8 +2379,8 @@ app.post('/api/payment/create-order', async (req, res) => {
 
   const amountInPaise = Math.round(Number(amount) * 100);
 
-  const razorpayKeyId = process.env.RAZORPAY_KEY_ID;
-  const razorpayKeySecret = process.env.RAZORPAY_KEY_SECRET;
+  const razorpayKeyId = process.env.RAZORPAY_KEY_ID || 'rzp_test_Tov2TH73ygLA8W';
+  const razorpayKeySecret = process.env.RAZORPAY_KEY_SECRET || 'fheF4dlryGFl2mrBJDoQEzp3';
 
   if (razorpayKeyId && razorpayKeySecret) {
     try {
@@ -2425,7 +2425,7 @@ app.post('/api/payment/create-order', async (req, res) => {
 
 app.post('/api/payment/verify-payment', (req, res) => {
   const { razorpay_order_id, razorpay_payment_id, razorpay_signature } = req.body;
-  const razorpayKeySecret = process.env.RAZORPAY_KEY_SECRET;
+  const razorpayKeySecret = process.env.RAZORPAY_KEY_SECRET || 'fheF4dlryGFl2mrBJDoQEzp3';
 
   if (razorpayKeySecret && razorpay_order_id && razorpay_payment_id && razorpay_signature) {
     const body = razorpay_order_id + '|' + razorpay_payment_id;
