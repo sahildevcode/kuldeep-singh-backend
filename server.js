@@ -605,6 +605,8 @@ const StudentSchema = new mongoose.Schema({
   id: { type: String, unique: true, required: true },
   name: String,
   email: String,
+  username: String,
+  plainPassword: { type: String, default: '' },
   phone: String,
   courseId: String,
   courseTitle: String,
@@ -613,7 +615,8 @@ const StudentSchema = new mongoose.Schema({
   feesPaid: Number,
   paymentStatus: String,
   progressPercent: Number,
-  avatar: String
+  avatar: String,
+  attendanceStatus: { type: String, default: 'Pending' }
 }, { timestamps: true, strict: false });
 
 const LiveStatusSchema = new mongoose.Schema({
@@ -651,6 +654,7 @@ const UserSchema = new mongoose.Schema({
   username: { type: String, unique: true, sparse: true, lowercase: true, trim: true },
   passwordHash: { type: String, required: true },
   passwordSalt: { type: String, required: true },
+  plainPassword: { type: String, default: '' },
   role: { type: String, enum: ['student', 'collector', 'admin'], default: 'student' },
   isEmailVerified: { type: Boolean, default: false },
   enrolledCourseIds: { type: [String], default: [] },
@@ -714,7 +718,7 @@ async function initMongoDB() {
     // Auto-seed Students if collection is empty
     const studentCount = await StudentModel.countDocuments();
     if (studentCount === 0) {
-      const existingStudents = readJsonFile(STUDENTS_FILE, INITIAL_SEED_STUDENTS);
+      const existingStudents = fs.existsSync(STUDENTS_FILE) ? readJsonFile(STUDENTS_FILE, []) : INITIAL_SEED_STUDENTS;
       if (existingStudents.length > 0) {
         await StudentModel.insertMany(existingStudents);
         console.log(`[BACKEND] Seeded ${existingStudents.length} students into MongoDB Atlas`);
@@ -1114,6 +1118,7 @@ app.post('/api/auth/send-registration-otp', async (req, res) => {
       name: cleanName,
       passwordHash: hash,
       passwordSalt: salt,
+      plainPassword: cleanPassword,
       role: role === 'collector' ? 'collector' : 'student',
       otp,
       expiresAt: Date.now() + 10 * 60 * 1000 // 10 minutes
@@ -1195,6 +1200,7 @@ app.post('/api/auth/verify-registration-otp', async (req, res) => {
       username: pending.username,
       passwordHash: pending.passwordHash,
       passwordSalt: pending.passwordSalt,
+      plainPassword: pending.plainPassword || '',
       role: pending.role,
       isEmailVerified: true,
       enrolledCourseIds: enrolledIds,
@@ -1296,6 +1302,7 @@ app.post('/api/auth/register', async (req, res) => {
       username: finalUsername,
       passwordHash: hash,
       passwordSalt: salt,
+      plainPassword: cleanPassword,
       role: role === 'collector' ? 'collector' : 'student',
       isEmailVerified: true,
       enrolledCourseIds: enrolledIds,
@@ -1644,6 +1651,153 @@ app.post('/api/session/logout', async (req, res) => {
 });
 
 // ==========================================
+// 1D. USER MANAGEMENT API (ALL REGISTERED ACCOUNTS)
+// ==========================================
+
+// Get All Registered Users
+app.get('/api/users', async (req, res) => {
+  try {
+    let users = [];
+    if (mongoose.connection.readyState === 1) {
+      users = await UserModel.find().sort({ createdAt: -1 }).lean();
+    }
+    if (!users || users.length === 0) {
+      users = readJsonFile(USERS_FILE, INITIAL_SEED_USERS);
+    }
+
+    const defaultPasswords = {
+      'student@kuldeepsingh.art': 'student123',
+      'collector@kuldeepsingh.art': 'collector123',
+      'testpatron99@gmail.com': 'patron123',
+      'sahildevcode@gmail.com': 'sahil123'
+    };
+
+    const sanitized = (users || []).map((u) => {
+      const email = (u.email || '').toLowerCase();
+      return {
+        id: u.id || String(u._id),
+        _id: u._id,
+        name: u.name || 'Academy Scholar',
+        email: u.email,
+        username: u.username || (u.email ? u.email.split('@')[0] : 'student'),
+        plainPassword: u.plainPassword || defaultPasswords[email] || 'art123456',
+        role: u.role || 'student',
+        isEmailVerified: Boolean(u.isEmailVerified),
+        enrolledCourseIds: u.enrolledCourseIds || [],
+        lastLoginAt: u.lastLoginAt,
+        createdAt: u.createdAt || new Date().toISOString(),
+        isBlocked: Boolean(u.isBlocked)
+      };
+    });
+
+    res.json(sanitized);
+  } catch (err) {
+    console.error('Get users error:', err);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// Update Registered User (Name, Email, Username, Password, Role)
+app.put('/api/users/:id', async (req, res) => {
+  try {
+    const targetId = req.params.id;
+    const { name, email, username, password, plainPassword, role, enrolledCourseIds, isBlocked } = req.body;
+    const updateData = {};
+    if (name) updateData.name = name.trim();
+    if (email) updateData.email = email.trim().toLowerCase();
+    if (username) updateData.username = username.trim().toLowerCase().replace(/[^a-z0-9_]/g, '_');
+    if (role) updateData.role = role;
+    if (typeof isBlocked === 'boolean') updateData.isBlocked = isBlocked;
+    if (Array.isArray(enrolledCourseIds)) updateData.enrolledCourseIds = enrolledCourseIds;
+
+    const newPass = (password || plainPassword || '').trim();
+    if (newPass) {
+      const { hash, salt } = hashPassword(newPass);
+      updateData.passwordHash = hash;
+      updateData.passwordSalt = salt;
+      updateData.plainPassword = newPass;
+    }
+
+    let updatedUser = null;
+    if (mongoose.connection.readyState === 1) {
+      const conditions = [{ id: targetId }];
+      if (mongoose.isValidObjectId(targetId)) conditions.push({ _id: targetId });
+      updatedUser = await UserModel.findOneAndUpdate(
+        { $or: conditions },
+        { $set: updateData },
+        { new: true }
+      ).lean();
+
+      // If email, name or password changed, also synchronize with StudentModel if this user is enrolled
+      const targetEmail = (updatedUser ? updatedUser.email : email);
+      if (targetEmail) {
+        const studentUpdate = {};
+        if (updateData.name) studentUpdate.name = updateData.name;
+        if (newPass) studentUpdate.plainPassword = newPass;
+        if (updateData.username) studentUpdate.username = updateData.username;
+        if (Object.keys(studentUpdate).length > 0) {
+          await StudentModel.updateMany(
+            { email: { $regex: new RegExp(`^${targetEmail}$`, 'i') } },
+            { $set: studentUpdate }
+          );
+        }
+      }
+    }
+
+    const localUsers = readJsonFile(USERS_FILE, INITIAL_SEED_USERS);
+    const idx = localUsers.findIndex((u) => u.id === targetId || String(u._id) === targetId);
+    if (idx !== -1) {
+      localUsers[idx] = { ...localUsers[idx], ...updateData };
+      writeJsonFile(USERS_FILE, localUsers);
+      if (!updatedUser) updatedUser = localUsers[idx];
+    }
+
+    if (newPass && updatedUser) {
+      const localStudents = readJsonFile(STUDENTS_FILE, []);
+      let stuUpdated = false;
+      localStudents.forEach((s) => {
+        if (s.email && updatedUser.email && s.email.toLowerCase() === updatedUser.email.toLowerCase()) {
+          s.plainPassword = newPass;
+          if (updateData.name) s.name = updateData.name;
+          if (updateData.username) s.username = updateData.username;
+          stuUpdated = true;
+        }
+      });
+      if (stuUpdated) writeJsonFile(STUDENTS_FILE, localStudents);
+    }
+
+    if (!updatedUser) return res.status(404).json({ success: false, error: 'User not found' });
+
+    broadcastUpdate('USER_UPDATED', updatedUser);
+    res.json({ success: true, user: updatedUser });
+  } catch (err) {
+    console.error('Update user error:', err);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// Delete Registered User
+app.delete('/api/users/:id', async (req, res) => {
+  try {
+    const targetId = req.params.id;
+    if (mongoose.connection.readyState === 1) {
+      const conditions = [{ id: targetId }];
+      if (mongoose.isValidObjectId(targetId)) conditions.push({ _id: targetId });
+      await UserModel.deleteMany({ $or: conditions });
+    }
+    const localUsers = readJsonFile(USERS_FILE, INITIAL_SEED_USERS);
+    const filtered = localUsers.filter((u) => u.id !== targetId && String(u._id) !== targetId);
+    writeJsonFile(USERS_FILE, filtered);
+
+    broadcastUpdate('USER_DELETED', { id: targetId });
+    res.json({ success: true, id: targetId });
+  } catch (err) {
+    console.error('Delete user error:', err);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// ==========================================
 // 2. COURSES & LECTURES API
 // ==========================================
 
@@ -1883,15 +2037,45 @@ app.delete('/api/courses/:id', async (req, res) => {
 
 app.get('/api/students', async (req, res) => {
   try {
+    let students = [];
+    let users = [];
+
     if (mongoose.connection.readyState === 1) {
-      const students = await StudentModel.find().sort({ createdAt: -1 }).lean();
-      if (students && students.length > 0) return res.json(students);
+      students = await StudentModel.find().sort({ createdAt: -1 }).lean();
+      users = await UserModel.find().lean();
+    } else {
+      students = readJsonFile(STUDENTS_FILE, []);
+      users = readJsonFile(USERS_FILE, []);
     }
+
+    const defaultPasswords = {
+      'student@kuldeepsingh.art': 'student123',
+      'aarav.sharma@gmail.com': 'student123',
+      'testpatron99@gmail.com': 'patron123',
+      'sahildevcode@gmail.com': 'sahil123'
+    };
+
+    const enriched = (students || []).map((s) => {
+      const email = (s.email || '').toLowerCase();
+      const matchedUser = (users || []).find((u) => (u.email || '').toLowerCase() === email);
+      const studentPassword = s.plainPassword || (matchedUser ? matchedUser.plainPassword : '') || defaultPasswords[email] || 'art123456';
+      const studentUsername = s.username || (matchedUser ? matchedUser.username : '') || (s.email ? s.email.split('@')[0] : 'scholar');
+
+      return {
+        ...s,
+        id: s.id || String(s._id),
+        username: studentUsername,
+        plainPassword: studentPassword,
+        attendanceStatus: s.attendanceStatus || 'Pending'
+      };
+    });
+
+    return res.json(enriched);
   } catch (e) {
     console.error('Mongo students get error:', e);
+    const students = readJsonFile(STUDENTS_FILE, []);
+    res.json(students);
   }
-  const students = readJsonFile(STUDENTS_FILE, INITIAL_SEED_STUDENTS);
-  res.json(students);
 });
 
 app.post('/api/students', async (req, res) => {
@@ -1899,6 +2083,8 @@ app.post('/api/students', async (req, res) => {
     id: req.body.id || `stu-${Date.now()}`,
     name: req.body.name || 'Student Artist',
     email: req.body.email || 'student@kuldeepsingh.art',
+    username: req.body.username || (req.body.email ? req.body.email.split('@')[0] : 'scholar'),
+    plainPassword: req.body.plainPassword || 'art123456',
     phone: req.body.phone || '',
     courseId: req.body.courseId || 'course-oil-mastery',
     courseTitle: req.body.courseTitle || 'The Master Oil Painting Diploma',
@@ -1907,7 +2093,8 @@ app.post('/api/students', async (req, res) => {
     feesPaid: Number(req.body.feesPaid) || 349,
     paymentStatus: req.body.paymentStatus || 'Paid',
     progressPercent: Number(req.body.progressPercent) || 0,
-    avatar: req.body.avatar || 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?q=80&w=150&auto=format&fit=crop'
+    avatar: req.body.avatar || 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?q=80&w=150&auto=format&fit=crop',
+    attendanceStatus: req.body.attendanceStatus || 'Pending'
   };
 
   let savedStudent;
@@ -1932,9 +2119,9 @@ app.post('/api/students', async (req, res) => {
     console.error('Mongo student post error:', e);
   }
 
-  const students = readJsonFile(STUDENTS_FILE, INITIAL_SEED_STUDENTS);
+  const students = readJsonFile(STUDENTS_FILE, []);
   const existingIdx = students.findIndex(
-    (s) => s.email.toLowerCase() === newStudent.email.toLowerCase() && s.courseId === newStudent.courseId
+    (s) => s.email && s.email.toLowerCase() === newStudent.email.toLowerCase() && s.courseId === newStudent.courseId
   );
   if (existingIdx !== -1) {
     students[existingIdx] = { ...students[existingIdx], ...newStudent, id: students[existingIdx].id };
@@ -1952,25 +2139,63 @@ app.post('/api/students', async (req, res) => {
 });
 
 app.put('/api/students/:id', async (req, res) => {
+  const targetId = req.params.id;
   let updated;
   try {
     if (mongoose.connection.readyState === 1) {
+      const conditions = [{ id: targetId }];
+      if (mongoose.isValidObjectId(targetId)) conditions.push({ _id: targetId });
       updated = await StudentModel.findOneAndUpdate(
-        { id: req.params.id },
-        { ...req.body, id: req.params.id },
+        { $or: conditions },
+        { ...req.body },
         { new: true }
       ).lean();
+
+      // If password, name, or username updated, sync with UserModel
+      const studentEmail = req.body.email || (updated && updated.email);
+      if (studentEmail && (req.body.plainPassword || req.body.password || req.body.name || req.body.username)) {
+        const userUpdate = {};
+        if (req.body.name) userUpdate.name = req.body.name;
+        if (req.body.username) userUpdate.username = req.body.username;
+        const passToSync = (req.body.plainPassword || req.body.password || '').trim();
+        if (passToSync) {
+          const { hash, salt } = hashPassword(passToSync);
+          userUpdate.passwordHash = hash;
+          userUpdate.passwordSalt = salt;
+          userUpdate.plainPassword = passToSync;
+        }
+        await UserModel.updateOne(
+          { email: { $regex: new RegExp(`^${studentEmail}$`, 'i') } },
+          { $set: userUpdate }
+        );
+      }
     }
   } catch (e) {
     console.error('Mongo student update error:', e);
   }
 
-  const students = readJsonFile(STUDENTS_FILE, INITIAL_SEED_STUDENTS);
-  const idx = students.findIndex((s) => s.id === req.params.id);
+  const students = readJsonFile(STUDENTS_FILE, []);
+  const idx = students.findIndex((s) => s.id === targetId || String(s._id) === targetId);
   if (idx !== -1) {
-    students[idx] = { ...students[idx], ...req.body, id: students[idx].id };
+    students[idx] = { ...students[idx], ...req.body };
     writeJsonFile(STUDENTS_FILE, students);
     if (!updated) updated = students[idx];
+  }
+
+  // Also sync in local users.json if password changed
+  const newPass = (req.body.plainPassword || req.body.password || '').trim();
+  if (newPass && updated && updated.email) {
+    const localUsers = readJsonFile(USERS_FILE, []);
+    const uIdx = localUsers.findIndex((u) => (u.email || '').toLowerCase() === (updated.email || '').toLowerCase());
+    if (uIdx !== -1) {
+      localUsers[uIdx].plainPassword = newPass;
+      const { hash, salt } = hashPassword(newPass);
+      localUsers[uIdx].passwordHash = hash;
+      localUsers[uIdx].passwordSalt = salt;
+      if (req.body.name) localUsers[uIdx].name = req.body.name;
+      if (req.body.username) localUsers[uIdx].username = req.body.username;
+      writeJsonFile(USERS_FILE, localUsers);
+    }
   }
 
   if (!updated) return res.status(404).json({ error: 'Student not found' });
@@ -1979,20 +2204,24 @@ app.put('/api/students/:id', async (req, res) => {
 });
 
 app.delete('/api/students/:id', async (req, res) => {
+  const targetId = req.params.id;
   try {
     if (mongoose.connection.readyState === 1) {
-      await StudentModel.deleteOne({ id: req.params.id });
+      const conditions = [{ id: targetId }];
+      if (mongoose.isValidObjectId(targetId)) conditions.push({ _id: targetId });
+      await StudentModel.deleteMany({ $or: conditions });
     }
   } catch (e) {
     console.error('Mongo student delete error:', e);
   }
 
-  const students = readJsonFile(STUDENTS_FILE, INITIAL_SEED_STUDENTS);
-  const filtered = students.filter((s) => s.id !== req.params.id);
+  const students = readJsonFile(STUDENTS_FILE, []);
+  const filtered = students.filter((s) => s.id !== targetId && String(s._id) !== targetId);
   writeJsonFile(STUDENTS_FILE, filtered);
 
-  broadcastUpdate('STUDENT_DELETED', { id: req.params.id });
-  res.json({ success: true, id: req.params.id });
+  broadcastUpdate('STUDENT_DELETED', { id: targetId });
+  console.log(`[BACKEND] Student Permanently Deleted: ${targetId}`);
+  res.json({ success: true, id: targetId });
 });
 
 // ==========================================
@@ -2218,7 +2447,28 @@ app.post('/api/orders', async (req, res) => {
 
       // Add to StudentModel & students.json for each purchased course
       const allCourses = readJsonFile(COURSES_FILE, INITIAL_SEED_COURSES);
-      const localStudents = readJsonFile(STUDENTS_FILE, INITIAL_SEED_STUDENTS);
+      const localStudents = readJsonFile(STUDENTS_FILE, []);
+
+      let userPlainPass = '';
+      let userUname = '';
+      try {
+        if (mongoose.connection.readyState === 1) {
+          const matchedUser = await UserModel.findOne({ email: customerEmail }).lean();
+          if (matchedUser) {
+            userPlainPass = matchedUser.plainPassword || '';
+            userUname = matchedUser.username || '';
+          }
+        } else {
+          const localUsers = readJsonFile(USERS_FILE, []);
+          const matchedUser = localUsers.find(u => (u.email || '').toLowerCase() === customerEmail.toLowerCase());
+          if (matchedUser) {
+            userPlainPass = matchedUser.plainPassword || '';
+            userUname = matchedUser.username || '';
+          }
+        }
+      } catch (e) {
+        // ignore
+      }
 
       for (const item of purchasedCourseItems) {
         const courseDetail = allCourses.find(c => c.id === item.id) || { title: item.title || 'Fine Art Masterclass', schedule: 'Saturday & Sunday • 6:00 PM IST' };
@@ -2226,6 +2476,8 @@ app.post('/api/orders', async (req, res) => {
           id: `stu-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
           name: newOrder.customerName || 'Academy Scholar',
           email: customerEmail,
+          username: userUname || customerEmail.split('@')[0],
+          plainPassword: userPlainPass || 'art123456',
           phone: newOrder.customerPhone || '',
           courseId: item.id,
           courseTitle: item.title || courseDetail.title,
@@ -2234,7 +2486,8 @@ app.post('/api/orders', async (req, res) => {
           feesPaid: Number(item.price) || Number(newOrder.totalAmount) || 349,
           paymentStatus: 'Paid',
           progressPercent: 0,
-          avatar: 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?q=80&w=150&auto=format&fit=crop'
+          avatar: 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?q=80&w=150&auto=format&fit=crop',
+          attendanceStatus: 'Pending'
         };
 
         if (mongoose.connection.readyState === 1) {
