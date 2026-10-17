@@ -928,16 +928,25 @@ const activeSessionsCache = new Map();
 // email -> { email, username, name, passwordHash, passwordSalt, role, otp, expiresAt }
 const pendingRegistrations = new Map();
 
-// Nodemailer Transporter Setup
-const transporter = nodemailer.createTransport({
-  host: process.env.SMTP_HOST || 'smtp.gmail.com',
-  port: parseInt(process.env.SMTP_PORT || '587', 10),
-  secure: process.env.SMTP_SECURE === 'true',
-  auth: {
-    user: process.env.SMTP_USER || '',
-    pass: process.env.SMTP_PASS || ''
+// Nodemailer Dynamic Transporter Setup
+function getMailTransporter() {
+  const host = process.env.SMTP_HOST;
+  const user = process.env.SMTP_USER;
+  const pass = process.env.SMTP_PASS;
+
+  if (host && host !== 'smtp.gmail.com') {
+    return nodemailer.createTransport({
+      host: host,
+      port: parseInt(process.env.SMTP_PORT || '587', 10),
+      secure: process.env.SMTP_SECURE === 'true',
+      auth: { user, pass }
+    });
   }
-});
+  return nodemailer.createTransport({
+    service: 'gmail',
+    auth: { user, pass }
+  });
+}
 
 // Helper to send 6-Digit OTP Email
 async function sendOtpEmail(toEmail, otp, name) {
@@ -968,6 +977,7 @@ async function sendOtpEmail(toEmail, otp, name) {
 
   if (process.env.SMTP_USER && process.env.SMTP_PASS) {
     try {
+      const transporter = getMailTransporter();
       await transporter.sendMail({
         from: `"Kuldeep Singh Atelier" <${process.env.SMTP_USER}>`,
         to: toEmail,
