@@ -2624,84 +2624,103 @@ app.put('/api/profile', async (req, res) => {
 // 7. RAZORPAY PAYMENT API
 // ==========================================
 
-app.post('/api/payment/create-order', async (req, res) => {
+// Helper function to create Razorpay orders
+const createRazorpayOrder = async (req, res) => {
   const { amount, currency = 'INR', receipt, notes } = req.body;
-  if (!amount || amount <= 0) {
-    return res.status(400).json({ error: 'Valid payment amount is required' });
+  const razorpayKeyId = process.env.RAZORPAY_KEY_ID;
+  const razorpayKeySecret = process.env.RAZORPAY_KEY_SECRET;
+
+  if (!razorpayKeyId || !razorpayKeySecret) {
+    return res.status(401).json({ error: 'Razorpay API credentials not configured in environment' });
   }
 
-  const amountInPaise = Math.round(Number(amount) * 100);
+  // Validate amount >= 100 paise (1 INR)
+  const amountInPaise = Math.round(Number(amount));
+  if (!amountInPaise || isNaN(amountInPaise) || amountInPaise < 100) {
+    return res.status(400).json({ error: 'Amount is required and must be at least 100 paise' });
+  }
 
-  const razorpayKeyId = process.env.RAZORPAY_KEY_ID || 'rzp_test_Tov2TH73ygLA8W';
-  const razorpayKeySecret = process.env.RAZORPAY_KEY_SECRET || 'fheF4dlryGFl2mrBJDoQEzp3';
+  try {
+    const razorpay = new Razorpay({
+      key_id: razorpayKeyId,
+      key_secret: razorpayKeySecret
+    });
 
-  if (razorpayKeyId && razorpayKeySecret) {
-    try {
-      const razorpay = new Razorpay({
-        key_id: razorpayKeyId,
-        key_secret: razorpayKeySecret
-      });
+    const order = await razorpay.orders.create({
+      amount: amountInPaise,
+      currency,
+      receipt: receipt || `rcpt_${Date.now()}`,
+      notes: notes || {}
+    });
 
-      const order = await razorpay.orders.create({
-        amount: amountInPaise,
-        currency,
-        receipt: receipt || `rcpt_${Date.now()}`,
-        notes: notes || {}
-      });
-
-      return res.json({
-        success: true,
-        orderId: order.id,
-        amount: order.amount,
-        currency: order.currency,
-        keyId: razorpayKeyId,
-        isLiveRazorpay: true
-      });
-    } catch (err) {
-      console.error('Razorpay order creation error:', err);
-      return res.status(500).json({ error: 'Failed to create Razorpay order', details: err.message });
-    }
-  } else {
-    // Demo Simulator Mode when real keys are not yet provided
-    const demoOrderId = `order_demo_${Date.now()}`;
     return res.json({
       success: true,
-      orderId: demoOrderId,
-      amount: amountInPaise,
-      currency: 'INR',
-      keyId: 'rzp_test_placeholder',
-      isLiveRazorpay: false,
-      message: 'Razorpay keys not yet set in environment. Running in Demo Simulator mode.'
+      order_id: order.id,
+      orderId: order.id,
+      amount: order.amount,
+      currency: order.currency,
+      keyId: razorpayKeyId
+    });
+  } catch (err) {
+    console.error('Razorpay order creation error:', err);
+    if (err.statusCode === 401 || (err.error && err.error.code === 'BAD_REQUEST_ERROR' && String(err.error.description).toLowerCase().includes('auth'))) {
+      return res.status(401).json({ error: 'Razorpay authentication failed', details: err.message });
+    }
+    return res.status(500).json({ error: 'Failed to create Razorpay order', details: err.message || err });
+  }
+};
+
+// Helper function to verify Razorpay payment signature
+const verifyRazorpaySignature = (req, res) => {
+  const razorpay_order_id = req.body.razorpay_order_id || req.body.order_id;
+  const razorpay_payment_id = req.body.razorpay_payment_id || req.body.payment_id;
+  const razorpay_signature = req.body.razorpay_signature || req.body.signature;
+  const razorpayKeySecret = process.env.RAZORPAY_KEY_SECRET;
+
+  if (!razorpayKeySecret) {
+    return res.status(401).json({ error: 'Razorpay Secret Key not configured in environment' });
+  }
+
+  if (!razorpay_order_id || !razorpay_payment_id || !razorpay_signature) {
+    return res.status(400).json({
+      success: false,
+      error: 'Missing required payment verification fields (order_id, payment_id, signature)'
     });
   }
-});
 
-app.post('/api/payment/verify-payment', (req, res) => {
-  const { razorpay_order_id, razorpay_payment_id, razorpay_signature } = req.body;
-  const razorpayKeySecret = process.env.RAZORPAY_KEY_SECRET || 'fheF4dlryGFl2mrBJDoQEzp3';
-
-  if (razorpayKeySecret && razorpay_order_id && razorpay_payment_id && razorpay_signature) {
-    const body = razorpay_order_id + '|' + razorpay_payment_id;
+  try {
+    const body = `${razorpay_order_id}|${razorpay_payment_id}`;
     const expectedSignature = crypto
       .createHmac('sha256', razorpayKeySecret)
-      .update(body.toString())
+      .update(body)
       .digest('hex');
 
     if (expectedSignature === razorpay_signature) {
-      return res.json({ success: true, verified: true, paymentId: razorpay_payment_id });
+      return res.json({
+        success: true,
+        verified: true,
+        message: 'Payment verified successfully',
+        payment_id: razorpay_payment_id,
+        order_id: razorpay_order_id
+      });
     } else {
-      return res.status(400).json({ success: false, verified: false, error: 'Invalid payment signature verification failed' });
+      return res.status(400).json({
+        success: false,
+        verified: false,
+        error: 'Invalid payment signature verification failed'
+      });
     }
-  } else {
-    // Simulator verification
-    return res.json({
-      success: true,
-      verified: true,
-      paymentId: razorpay_payment_id || `pay_demo_${Date.now()}`,
-      mode: 'simulator'
-    });
+  } catch (err) {
+    console.error('Signature verification error:', err);
+    return res.status(500).json({ success: false, error: 'Internal error verifying payment signature', details: err.message });
   }
-});
+};
+
+// Register endpoints for both standard and payment-prefixed paths
+app.post('/api/create-order', createRazorpayOrder);
+app.post('/api/payment/create-order', createRazorpayOrder);
+app.post('/api/verify-payment', verifyRazorpaySignature);
+app.post('/api/payment/verify-payment', verifyRazorpaySignature);
 
 // ==========================================
 // 8. BUNNY STREAM VIDEO UPLOAD API
