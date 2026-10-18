@@ -300,149 +300,7 @@ const INITIAL_SEED_STUDENTS = [
   }
 ];
 
-const INITIAL_SEED_COURSES = [
-  {
-    id: 'course-oil-mastery',
-    title: 'The Master Oil Painting Diploma',
-    subtitle: 'From Blank Belgian Canvas to Classical Realism, Glazes & Expressive Impasto',
-    level: 'All Levels',
-    category: 'Oil Painting',
-    durationHours: 36,
-    durationMonths: '3 Months Intensive Masterclass',
-    schedule: 'Saturday & Sunday • 6:00 PM – 8:00 PM IST (Live Atelier + 4K Recordings)',
-    startDate: 'Next Cohort: 1st of Upcoming Month',
-    mode: 'Live Studio Workshop + 1-on-1 Personal Critique by Kuldeep Singh',
-    certification: 'Master of Classical Oils Certificate signed by Artist Kuldeep Singh',
-    prerequisites: 'No prior oil painting experience needed; passion for classical fine art is required.',
-    totalLessons: 48,
-    price: 349,
-    originalPrice: 499,
-    rating: 4.96,
-    studentsEnrolled: 2480,
-    thumbnail: 'https://images.unsplash.com/photo-1579783900882-c0d3dad7b119?q=80&w=1200&auto=format&fit=crop',
-    summary: 'A 3-month comprehensive diploma covering classical Old Masters glazing, fat-over-lean chemical rules, portrait flesh tones, and bold sculptural impasto.',
-    liveClassStatus: 'offline',
-    liveClassUrl: 'https://meet.google.com/ks-studio-atelier',
-    modules: [
-      {
-        id: 'mod-1',
-        title: 'Month 1: Studio Setup, Pigment Chemistry & Underpainting',
-        duration: '12 Hours (Weeks 1 – 4)',
-        lessonsCount: 4,
-        topics: [
-          'Week 1: Non-toxic studio safety, oils, solvents, and medium recipes',
-          'Week 2: Stretching linen, sizing with rabbit skin glue, and applying oil ground',
-          'Week 3: Sight-size proportions and Imprimatura tonal washes',
-          'Week 4: Grisaille monochrome study — establishing indestructible value structure'
-        ],
-        lectures: [
-          {
-            id: 'lec-oil-1',
-            title: 'Week 1: Non-toxic studio safety, oils, solvents, and medium recipes',
-            duration: '48 Mins',
-            videoUrl: 'https://www.youtube.com/embed/dQw4w9WgXcQ',
-            summary: 'Comprehensive workshop on proper ventilation, cold-pressed linseed oil chemistry, and archival dammar preparations.'
-          },
-          {
-            id: 'lec-oil-2',
-            title: 'Week 2: Stretching linen, sizing with rabbit skin glue, and applying oil ground',
-            duration: '52 Mins',
-            videoUrl: 'https://www.youtube.com/embed/dQw4w9WgXcQ',
-            summary: 'Master practical demonstration on traditional Belgian linen preparation.'
-          },
-          {
-            id: 'lec-oil-3',
-            title: 'Week 3: Sight-size proportions and Imprimatura tonal washes',
-            duration: '45 Mins',
-            videoUrl: 'https://www.youtube.com/embed/dQw4w9WgXcQ',
-            summary: 'Laying down the warm raw umber ground and blocking primary anatomical planes.'
-          },
-          {
-            id: 'lec-oil-4',
-            title: 'Week 4: Grisaille monochrome study — value structure',
-            duration: '60 Mins',
-            videoUrl: 'https://www.youtube.com/embed/dQw4w9WgXcQ',
-            summary: 'Executing a monochrome chiaroscuro study before introducing chromatic glazes.'
-          }
-        ]
-      },
-      {
-        id: 'mod-2',
-        title: 'Month 2: Alla Prima, Heavy Impasto & Color Temperatures',
-        duration: '12 Hours (Weeks 5 – 8)',
-        lessonsCount: 2,
-        topics: [
-          'Week 5: Direct painting speed & spontaneous brush calligraphy',
-          'Week 6: Palette knife sculpting — layering thick mineral paste'
-        ],
-        lectures: [
-          {
-            id: 'lec-oil-5',
-            title: 'Week 5: Direct painting speed & spontaneous brush calligraphy',
-            duration: '50 Mins',
-            videoUrl: 'https://www.youtube.com/embed/dQw4w9WgXcQ',
-            summary: 'Wet-on-wet expressive oil painting techniques.'
-          },
-          {
-            id: 'lec-oil-6',
-            title: 'Week 6: Palette knife sculpting — layering thick mineral paste',
-            duration: '55 Mins',
-            videoUrl: 'https://www.youtube.com/embed/dQw4w9WgXcQ',
-            summary: 'Creating sculpted textural surfaces that catch dimensional light.'
-          }
-        ]
-      }
-    ]
-  },
-  {
-    id: 'course-realistic-sketching',
-    title: 'Foundations of Realistic Sketching & Human Anatomy',
-    subtitle: 'Master Sight-Size Measuring, 5-Value Light & Shadow, Willow Charcoal, and Figure Drawing',
-    level: 'All Levels',
-    category: 'Realistic Sketching',
-    durationHours: 26,
-    durationMonths: '2 Months Comprehensive Foundation',
-    schedule: 'Tuesday & Thursday • 7:00 PM – 9:00 PM IST (Live Step-by-Step Demos)',
-    startDate: 'Next Cohort: 10th of Upcoming Month',
-    mode: 'Live Anatomy Drawing Classes + Weekly Homework Review',
-    certification: 'Academic Draftsmanship Certificate by Artist Kuldeep Singh',
-    prerequisites: 'Open to beginners and self-taught sketchers wanting academic precision.',
-    totalLessons: 36,
-    price: 249,
-    originalPrice: 349,
-    rating: 4.98,
-    studentsEnrolled: 3820,
-    thumbnail: 'https://images.unsplash.com/photo-1544967082-d9d25d867d66?q=80&w=1200&auto=format&fit=crop',
-    summary: 'A 2-month rigorous foundation in seeing like a draftsman. Master graphite pressures, willow charcoal sculpting, human bone landmarks, and photographic realism.',
-    liveClassStatus: 'offline',
-    liveClassUrl: 'https://meet.google.com/ks-studio-atelier',
-    modules: [
-      {
-        id: 'mod-s1',
-        title: 'Month 1: The Draftsman’s Eye, Line Dynamics & Form Lighting',
-        duration: '13 Hours (Weeks 1 – 4)',
-        lessonsCount: 2,
-        topics: ['Week 1: Pencil grip ergonomics', 'Week 2: The 5-Value tonal scale'],
-        lectures: [
-          {
-            id: 'lec-sk-1',
-            title: 'Week 1: Pencil grip ergonomics & fine mechanical control',
-            duration: '42 Mins',
-            videoUrl: 'https://www.youtube.com/embed/dQw4w9WgXcQ',
-            summary: 'Loose gestural arm movement vs wrist precision.'
-          },
-          {
-            id: 'lec-sk-2',
-            title: 'Week 2: The 5-Value tonal scale on geometric solids',
-            duration: '47 Mins',
-            videoUrl: 'https://www.youtube.com/embed/dQw4w9WgXcQ',
-            summary: 'Understanding center light, core shadow, and ambient occlusion.'
-          }
-        ]
-      }
-    ]
-  }
-];
+const INITIAL_SEED_COURSES = [];
 
 const INITIAL_LIVE_STATUS = {
   isLive: false,
@@ -592,6 +450,7 @@ const CourseSchema = new mongoose.Schema({
   rating: Number,
   studentsEnrolled: Number,
   thumbnail: String,
+  images: [String],
   summary: String,
   description: String,
   whatYouWillLearn: Array,
@@ -710,9 +569,11 @@ async function initMongoDB() {
     // Auto-seed Courses if collection is empty
     const courseCount = await CourseModel.countDocuments();
     if (courseCount === 0) {
-      const existingCourses = readJsonFile(COURSES_FILE, INITIAL_SEED_COURSES);
-      await CourseModel.insertMany(existingCourses);
-      console.log(`[BACKEND] Seeded ${existingCourses.length} courses into MongoDB Atlas`);
+      const existingCourses = readJsonFile(COURSES_FILE, []);
+      if (Array.isArray(existingCourses) && existingCourses.length > 0) {
+        await CourseModel.insertMany(existingCourses);
+        console.log(`[BACKEND] Seeded ${existingCourses.length} courses into MongoDB Atlas`);
+      }
     }
 
     // Auto-seed Students if collection is empty
