@@ -305,6 +305,8 @@ const INITIAL_SEED_COURSES = [];
 const INITIAL_LIVE_STATUS = {
   isLive: false,
   liveStreamUrl: 'https://meet.google.com/ks-studio-atelier',
+  courseId: null,
+  courseTitle: null,
   topic: 'Masterclass Live Studio Broadcast • Atelier Demonstration',
   updatedAt: new Date().toISOString()
 };
@@ -481,6 +483,8 @@ const StudentSchema = new mongoose.Schema({
 const LiveStatusSchema = new mongoose.Schema({
   isLive: Boolean,
   liveStreamUrl: String,
+  courseId: String,
+  courseTitle: String,
   topic: String,
   updatedAt: String
 }, { timestamps: true, strict: false });
