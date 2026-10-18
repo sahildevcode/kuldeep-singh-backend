@@ -1662,20 +1662,23 @@ app.delete('/api/users/:id', async (req, res) => {
 // 2. COURSES & LECTURES API
 // ==========================================
 
+const DUMMY_COURSE_IDS = ['course-oil-mastery', 'course-realistic-sketching', 'course-watercolor-fluid', 'course-color-alchemy'];
+
 app.get('/api/courses', async (req, res) => {
   try {
     if (mongoose.connection.readyState === 2) {
       await mongoose.connection.asPromise().catch(() => {});
     }
     if (mongoose.connection.readyState === 1) {
-      const courses = await CourseModel.find().lean();
+      await CourseModel.deleteMany({ id: { $in: DUMMY_COURSE_IDS } }).catch(() => {});
+      const courses = await CourseModel.find({ id: { $nin: DUMMY_COURSE_IDS } }).lean();
       if (Array.isArray(courses)) return res.json(courses);
     }
   } catch (e) {
     console.error('Mongo courses get error:', e);
   }
-  const courses = readJsonFile(COURSES_FILE, INITIAL_SEED_COURSES);
-  res.json(courses);
+  const courses = readJsonFile(COURSES_FILE, []);
+  res.json(courses.filter((c) => !DUMMY_COURSE_IDS.includes(c.id)));
 });
 
 app.get('/api/courses/:id', async (req, res) => {
@@ -1878,13 +1881,13 @@ app.put('/api/courses/:id', async (req, res) => {
 app.delete('/api/courses/:id', async (req, res) => {
   try {
     if (mongoose.connection.readyState === 1) {
-      await CourseModel.deleteOne({ id: req.params.id });
+      await CourseModel.deleteMany({ $or: [{ id: req.params.id }, { _id: req.params.id }] });
     }
   } catch (e) {
     console.error('Mongo course delete error:', e);
   }
 
-  const courses = readJsonFile(COURSES_FILE, INITIAL_SEED_COURSES);
+  const courses = readJsonFile(COURSES_FILE, []);
   const filtered = courses.filter((c) => c.id !== req.params.id);
   writeJsonFile(COURSES_FILE, filtered);
 
