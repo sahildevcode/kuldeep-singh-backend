@@ -1879,20 +1879,23 @@ app.put('/api/courses/:id', async (req, res) => {
 
 // Delete Course
 app.delete('/api/courses/:id', async (req, res) => {
+  const targetId = req.params.id;
   try {
     if (mongoose.connection.readyState === 1) {
-      await CourseModel.deleteMany({ $or: [{ id: req.params.id }, { _id: req.params.id }] });
+      const conditions = [{ id: targetId }];
+      if (mongoose.isValidObjectId(targetId)) conditions.push({ _id: targetId });
+      await CourseModel.deleteMany({ $or: conditions });
     }
   } catch (e) {
     console.error('Mongo course delete error:', e);
   }
 
   const courses = readJsonFile(COURSES_FILE, []);
-  const filtered = courses.filter((c) => c.id !== req.params.id);
+  const filtered = courses.filter((c) => c.id !== targetId && c._id !== targetId);
   writeJsonFile(COURSES_FILE, filtered);
 
-  broadcastUpdate('COURSE_DELETED', { id: req.params.id });
-  res.json({ success: true, message: `Course ${req.params.id} deleted` });
+  broadcastUpdate('COURSE_DELETED', { id: targetId });
+  res.json({ success: true, message: `Course ${targetId} deleted` });
 });
 
 // ==========================================
