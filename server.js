@@ -1857,9 +1857,41 @@ app.put('/api/courses/:id', async (req, res) => {
   let updatedCourse;
   try {
     if (mongoose.connection.readyState === 1) {
+      const existing = await CourseModel.findOne({ id: req.params.id }).lean();
+      let updatePayload = { ...req.body, id: req.params.id };
+
+      // PROTECTION: If existing course has modules with lectures, NEVER wipe them out on general updates!
+      if (existing && Array.isArray(existing.modules) && existing.modules.some((m) => Array.isArray(m.lectures) && m.lectures.length > 0)) {
+        if (Array.isArray(updatePayload.modules) && updatePayload.modules.length > 0) {
+          updatePayload.modules = updatePayload.modules.map((m, mIdx) => {
+            const existingM = existing.modules[mIdx];
+            const incomingLecs = Array.isArray(m.lectures) ? m.lectures : [];
+            const existingLecs = (existingM && Array.isArray(existingM.lectures)) ? existingM.lectures : [];
+
+            const mergedLecs = [...incomingLecs];
+            for (const exLec of existingLecs) {
+              if (!mergedLecs.some((l) => l.id === exLec.id || (l.videoUrl && l.videoUrl === exLec.videoUrl))) {
+                mergedLecs.push(exLec);
+              }
+            }
+            return {
+              ...m,
+              lectures: mergedLecs,
+              lessonsCount: mergedLecs.length,
+              topics: mergedLecs.map((l) => l.title)
+            };
+          });
+          updatePayload.totalLessons = updatePayload.modules.reduce((acc, m) => acc + (m.lectures ? m.lectures.length : m.lessonsCount || 0), 0);
+        } else {
+          // If updatePayload did not include modules or modules was empty, retain existing modules and totalLessons!
+          updatePayload.modules = existing.modules;
+          updatePayload.totalLessons = existing.totalLessons || existing.modules.reduce((acc, m) => acc + (m.lectures ? m.lectures.length : m.lessonsCount || 0), 0);
+        }
+      }
+
       updatedCourse = await CourseModel.findOneAndUpdate(
         { id: req.params.id },
-        { ...req.body, id: req.params.id },
+        updatePayload,
         { new: true, upsert: true }
       ).lean();
     }
@@ -1870,7 +1902,29 @@ app.put('/api/courses/:id', async (req, res) => {
   const courses = readJsonFile(COURSES_FILE, INITIAL_SEED_COURSES);
   const idx = courses.findIndex((c) => c.id === req.params.id);
   if (idx !== -1) {
-    courses[idx] = { ...courses[idx], ...req.body, id: courses[idx].id };
+    const existingC = courses[idx];
+    let payload = { ...courses[idx], ...req.body, id: courses[idx].id };
+    if (existingC && Array.isArray(existingC.modules) && existingC.modules.some((m) => Array.isArray(m.lectures) && m.lectures.length > 0)) {
+      if (Array.isArray(payload.modules) && payload.modules.length > 0) {
+        payload.modules = payload.modules.map((m, mIdx) => {
+          const exM = existingC.modules[mIdx];
+          const incLecs = Array.isArray(m.lectures) ? m.lectures : [];
+          const exLecs = (exM && Array.isArray(exM.lectures)) ? exM.lectures : [];
+          const merged = [...incLecs];
+          for (const ex of exLecs) {
+            if (!merged.some((l) => l.id === ex.id || (l.videoUrl && l.videoUrl === ex.videoUrl))) {
+              merged.push(ex);
+            }
+          }
+          return { ...m, lectures: merged, lessonsCount: merged.length, topics: merged.map((l) => l.title) };
+        });
+        payload.totalLessons = payload.modules.reduce((acc, m) => acc + (m.lectures ? m.lectures.length : m.lessonsCount || 0), 0);
+      } else {
+        payload.modules = existingC.modules;
+        payload.totalLessons = existingC.totalLessons;
+      }
+    }
+    courses[idx] = payload;
     writeJsonFile(COURSES_FILE, courses);
     if (!updatedCourse) updatedCourse = courses[idx];
   }
