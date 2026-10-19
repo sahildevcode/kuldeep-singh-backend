@@ -35,6 +35,7 @@ const PROFILE_FILE = path.join(DATA_DIR, 'profile.json');
 const USERS_FILE = path.join(DATA_DIR, 'users.json');
 const INQUIRIES_FILE = path.join(DATA_DIR, 'inquiries.json');
 const UPCOMING_COURSES_FILE = path.join(DATA_DIR, 'upcoming_courses.json');
+const TESTIMONIALS_FILE = path.join(DATA_DIR, 'testimonials.json');
 
 if (!fs.existsSync(DATA_DIR)) {
   fs.mkdirSync(DATA_DIR, { recursive: true });
@@ -2018,6 +2019,53 @@ app.delete('/api/upcoming-courses/:id', async (req, res) => {
 
   broadcastUpdate('UPCOMING_COURSE_DELETED', { id: targetId });
   res.json({ success: true, message: `Upcoming course ${targetId} deleted` });
+});
+
+// ==========================================
+// 2.6 TESTIMONIALS & REVIEWS API
+// ==========================================
+
+app.get('/api/testimonials', async (req, res) => {
+  const testimonials = readJsonFile(TESTIMONIALS_FILE, []);
+  res.json({ success: true, count: testimonials.length, testimonials });
+});
+
+app.post('/api/testimonials', async (req, res) => {
+  const newTestimonial = req.body;
+  if (!newTestimonial.id) {
+    newTestimonial.id = 'rev-' + Date.now();
+  }
+  const testimonials = readJsonFile(TESTIMONIALS_FILE, []);
+  testimonials.unshift(newTestimonial);
+  writeJsonFile(TESTIMONIALS_FILE, testimonials);
+
+  broadcastUpdate('TESTIMONIAL_CREATED', newTestimonial);
+  res.status(201).json({ success: true, testimonial: newTestimonial });
+});
+
+app.put('/api/testimonials/:id', async (req, res) => {
+  const targetId = req.params.id;
+  const updates = req.body;
+  const testimonials = readJsonFile(TESTIMONIALS_FILE, []);
+  const idx = testimonials.findIndex((t) => t.id === targetId);
+  if (idx !== -1) {
+    testimonials[idx] = { ...testimonials[idx], ...updates };
+    writeJsonFile(TESTIMONIALS_FILE, testimonials);
+    broadcastUpdate('TESTIMONIAL_UPDATED', testimonials[idx]);
+    res.json({ success: true, testimonial: testimonials[idx] });
+  } else {
+    res.status(404).json({ success: false, message: 'Testimonial not found' });
+  }
+});
+
+app.delete('/api/testimonials/:id', async (req, res) => {
+  const targetId = req.params.id;
+  const testimonials = readJsonFile(TESTIMONIALS_FILE, []);
+  const filtered = testimonials.filter((t) => t.id !== targetId);
+  writeJsonFile(TESTIMONIALS_FILE, filtered);
+
+  broadcastUpdate('TESTIMONIAL_DELETED', { id: targetId });
+  res.json({ success: true, message: `Testimonial ${targetId} deleted` });
 });
 
 // ==========================================
