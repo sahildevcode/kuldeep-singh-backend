@@ -33,6 +33,7 @@ const STUDENTS_FILE = path.join(DATA_DIR, 'students.json');
 const LIVE_STATUS_FILE = path.join(DATA_DIR, 'live_status.json');
 const PROFILE_FILE = path.join(DATA_DIR, 'profile.json');
 const USERS_FILE = path.join(DATA_DIR, 'users.json');
+const INQUIRIES_FILE = path.join(DATA_DIR, 'inquiries.json');
 
 if (!fs.existsSync(DATA_DIR)) {
   fs.mkdirSync(DATA_DIR, { recursive: true });
@@ -552,6 +553,21 @@ const LiveStatusModel = mongoose.model('LiveStatus', LiveStatusSchema);
 const ProfileModel = mongoose.model('Profile', ProfileSchema);
 const ActiveSessionModel = mongoose.model('ActiveSession', ActiveSessionSchema);
 const UserModel = mongoose.model('User', UserSchema);
+
+const InquirySchema = new mongoose.Schema({
+  id: { type: String, unique: true, required: true },
+  name: { type: String, required: true },
+  email: { type: String, default: '' },
+  phone: { type: String, required: true },
+  subject: { type: String, default: 'General Inquiry' },
+  message: { type: String, default: '' },
+  city: { type: String, default: '' },
+  status: { type: String, default: 'new' }, // 'new' | 'contacted' | 'resolved'
+  source: { type: String, default: 'website_header' },
+  createdAt: { type: Date, default: Date.now }
+}, { timestamps: true, strict: false });
+
+const InquiryModel = mongoose.model('Inquiry', InquirySchema);
 
 let isMongoConnected = false;
 
@@ -2813,6 +2829,102 @@ app.post('/api/upload/video', upload.single('video'), async (req, res) => {
   } catch (err) {
     console.error('❌ [BUNNY STREAM] Upload Error:', err);
     return res.status(500).json({ error: 'Video upload to Bunny Stream failed', details: err.message });
+  }
+});
+
+// -------------------------------------------------------------
+// 10. INQUIRIES & LEADS API
+// -------------------------------------------------------------
+
+app.get('/api/inquiries', async (req, res) => {
+  try {
+    if (mongoose.connection.readyState === 1) {
+      const inquiries = await InquiryModel.find().sort({ createdAt: -1 }).lean();
+      return res.json(inquiries || []);
+    }
+  } catch (err) {
+    console.error('Mongo get inquiries error:', err);
+  }
+  const list = readJsonFile(INQUIRIES_FILE, []);
+  res.json(list.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()));
+});
+
+app.post('/api/inquiries', async (req, res) => {
+  try {
+    const newInquiry = {
+      id: req.body.id || `inq-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+      name: (req.body.name || '').trim(),
+      email: (req.body.email || '').trim().toLowerCase(),
+      phone: (req.body.phone || '').trim(),
+      subject: (req.body.subject || 'General Inquiry').trim(),
+      message: (req.body.message || '').trim(),
+      city: (req.body.city || '').trim(),
+      status: 'new',
+      source: req.body.source || 'website_header',
+      createdAt: new Date().toISOString()
+    };
+
+    if (!newInquiry.name || !newInquiry.phone) {
+      return res.status(400).json({ error: 'Name and Phone number are required' });
+    }
+
+    let saved = null;
+    if (mongoose.connection.readyState === 1) {
+      saved = await InquiryModel.create(newInquiry);
+    }
+
+    const list = readJsonFile(INQUIRIES_FILE, []);
+    list.unshift(saved ? saved.toObject() : newInquiry);
+    writeJsonFile(INQUIRIES_FILE, list);
+
+    broadcastUpdate('INQUIRY_CREATED', saved ? saved.toObject() : newInquiry);
+    console.log(`📩 [INQUIRY] New customer inquiry from ${newInquiry.name} (${newInquiry.phone})!`);
+
+    res.status(201).json({ success: true, inquiry: saved ? saved.toObject() : newInquiry });
+  } catch (err) {
+    console.error('Save inquiry error:', err);
+    res.status(500).json({ error: 'Failed to record inquiry', details: err.message });
+  }
+});
+
+app.put('/api/inquiries/:id', async (req, res) => {
+  try {
+    let updated = null;
+    if (mongoose.connection.readyState === 1) {
+      updated = await InquiryModel.findOneAndUpdate(
+        { id: req.params.id },
+        { ...req.body },
+        { new: true }
+      ).lean();
+    }
+
+    const list = readJsonFile(INQUIRIES_FILE, []);
+    const idx = list.findIndex((i) => i.id === req.params.id);
+    if (idx !== -1) {
+      list[idx] = { ...list[idx], ...req.body };
+      writeJsonFile(INQUIRIES_FILE, list);
+      if (!updated) updated = list[idx];
+    }
+
+    if (!updated) return res.status(404).json({ error: 'Inquiry not found' });
+    broadcastUpdate('INQUIRY_UPDATED', updated);
+    res.json({ success: true, inquiry: updated });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to update inquiry' });
+  }
+});
+
+app.delete('/api/inquiries/:id', async (req, res) => {
+  try {
+    if (mongoose.connection.readyState === 1) {
+      await InquiryModel.deleteOne({ id: req.params.id });
+    }
+    const list = readJsonFile(INQUIRIES_FILE, []);
+    writeJsonFile(INQUIRIES_FILE, list.filter((i) => i.id !== req.params.id));
+    broadcastUpdate('INQUIRY_DELETED', { id: req.params.id });
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to delete inquiry' });
   }
 });
 
