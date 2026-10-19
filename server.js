@@ -34,6 +34,7 @@ const LIVE_STATUS_FILE = path.join(DATA_DIR, 'live_status.json');
 const PROFILE_FILE = path.join(DATA_DIR, 'profile.json');
 const USERS_FILE = path.join(DATA_DIR, 'users.json');
 const INQUIRIES_FILE = path.join(DATA_DIR, 'inquiries.json');
+const UPCOMING_COURSES_FILE = path.join(DATA_DIR, 'upcoming_courses.json');
 
 if (!fs.existsSync(DATA_DIR)) {
   fs.mkdirSync(DATA_DIR, { recursive: true });
@@ -1970,6 +1971,53 @@ app.delete('/api/courses/:id', async (req, res) => {
 
   broadcastUpdate('COURSE_DELETED', { id: targetId });
   res.json({ success: true, message: `Course ${targetId} deleted` });
+});
+
+// ==========================================
+// 2.5 UPCOMING COURSES API
+// ==========================================
+
+app.get('/api/upcoming-courses', async (req, res) => {
+  const upcoming = readJsonFile(UPCOMING_COURSES_FILE, []);
+  res.json({ success: true, count: upcoming.length, upcomingCourses: upcoming });
+});
+
+app.post('/api/upcoming-courses', async (req, res) => {
+  const newCourse = req.body;
+  if (!newCourse.id) {
+    newCourse.id = 'up-course-' + Date.now();
+  }
+  const upcoming = readJsonFile(UPCOMING_COURSES_FILE, []);
+  upcoming.unshift(newCourse);
+  writeJsonFile(UPCOMING_COURSES_FILE, upcoming);
+
+  broadcastUpdate('UPCOMING_COURSE_CREATED', newCourse);
+  res.status(201).json({ success: true, upcomingCourse: newCourse });
+});
+
+app.put('/api/upcoming-courses/:id', async (req, res) => {
+  const targetId = req.params.id;
+  const updates = req.body;
+  const upcoming = readJsonFile(UPCOMING_COURSES_FILE, []);
+  const idx = upcoming.findIndex((c) => c.id === targetId);
+  if (idx !== -1) {
+    upcoming[idx] = { ...upcoming[idx], ...updates };
+    writeJsonFile(UPCOMING_COURSES_FILE, upcoming);
+    broadcastUpdate('UPCOMING_COURSE_UPDATED', upcoming[idx]);
+    res.json({ success: true, upcomingCourse: upcoming[idx] });
+  } else {
+    res.status(404).json({ success: false, message: 'Upcoming course not found' });
+  }
+});
+
+app.delete('/api/upcoming-courses/:id', async (req, res) => {
+  const targetId = req.params.id;
+  const upcoming = readJsonFile(UPCOMING_COURSES_FILE, []);
+  const filtered = upcoming.filter((c) => c.id !== targetId);
+  writeJsonFile(UPCOMING_COURSES_FILE, filtered);
+
+  broadcastUpdate('UPCOMING_COURSE_DELETED', { id: targetId });
+  res.json({ success: true, message: `Upcoming course ${targetId} deleted` });
 });
 
 // ==========================================
