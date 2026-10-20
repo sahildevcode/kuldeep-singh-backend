@@ -657,7 +657,7 @@ initMongoDB();
 let sseClients = [];
 
 function broadcastUpdate(type, payload) {
-  const message = `data: ${JSON.stringify({ type, payload, timestamp: Date.now() })}\n\n`;
+  const message = `data: ${JSON.stringify({ type, payload, data: payload, timestamp: Date.now() })}\n\n`;
   sseClients.forEach((client) => {
     try {
       client.res.write(message);
