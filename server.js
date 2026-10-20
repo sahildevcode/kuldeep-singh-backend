@@ -506,14 +506,29 @@ let sseClients = [];
 
 function broadcastUpdate(type, payload) {
   const message = `data: ${JSON.stringify({ type, payload, data: payload, timestamp: Date.now() })}\n\n`;
-  sseClients.forEach((client) => {
+  sseClients = sseClients.filter((client) => {
     try {
+      if (client.res.writableEnded || client.res.destroyed) return false;
       client.res.write(message);
-    } catch (e) {
-      // client disconnected
+      return true;
+    } catch {
+      return false;
     }
   });
 }
+
+// Clean up stale SSE connections periodically to prevent memory leaks on Render
+setInterval(() => {
+  sseClients = sseClients.filter((client) => {
+    try {
+      if (client.res.writableEnded || client.res.destroyed) return false;
+      client.res.write(': keep-alive\n\n');
+      return true;
+    } catch {
+      return false;
+    }
+  });
+}, 25000);
 
 // -------------------------------------------------------------
 // ROUTES
@@ -1784,10 +1799,6 @@ app.put('/api/courses/:id', async (req, res) => {
       payload.modules = existingC.modules;
       payload.totalLessons = existingC.totalLessons;
     }
-    courses[idx] = payload;
-    writeJsonFile(COURSES_FILE, courses);
-    if (!updatedCourse) updatedCourse = courses[idx];
-  }
     courses[idx] = payload;
     writeJsonFile(COURSES_FILE, courses);
     if (!updatedCourse) updatedCourse = courses[idx];
