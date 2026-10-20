@@ -45,111 +45,11 @@ if (!fs.existsSync(DATA_DIR)) {
 // SEED DATA
 // -------------------------------------------------------------
 
-const INITIAL_SEED_ORDERS = [
-  {
-    id: 'ORD_00932',
-    customerName: 'Rajesh & Sunita Oberoi',
-    customerEmail: 'oberoi.residence@oberoigroup.com',
-    customerPhone: '+91 98100 88231',
-    customerCity: 'Golf Links',
-    customerState: 'New Delhi',
-    date: '18 Aug, 2026',
-    orderTime: '01:05 PM',
-    orderMonth: '2026-08',
-    items: [
-      {
-        id: 'art-05',
-        type: 'artwork',
-        title: 'Serenade at Dawn',
-        subtitle: 'Charcoal & Raw Umber Study on Archival Paper',
-        price: 95000,
-        image: 'https://images.unsplash.com/photo-1578301978693-85fa9c0320b9?q=80&w=600&auto=format&fit=crop',
-        quantity: 1,
-        mediumOrCategory: 'Charcoal & Graphite'
-      }
-    ],
-    subtotal: 95000,
-    discount: 0,
-    shipping: 0,
-    totalAmount: 95000,
-    paymentMethod: 'Direct Bank RTGS Transfer',
-    paymentStatus: 'Paid',
-    orderStatus: 'Delivered',
-    currentStep: 4,
-    stepStatus: 'delivered',
-    deliveryAddress: 'Bungalow 14, Golf Links, New Delhi 110003',
-    trackingNumber: 'BLUEDART-EXP-77210',
-    carrierName: 'BlueDart Express',
-    notes: 'Fragile archival fine art crating',
-    stepTimestamps: {
-      placed: '01:05 PM, 18 Aug, 2026',
-      accepted: '02:30 PM, 18 Aug, 2026',
-      dispatched: '10:00 AM, 19 Aug, 2026',
-      delivered: '04:15 PM, 20 Aug, 2026'
-    }
-  }
-];
+const INITIAL_SEED_ORDERS = [];
 
 const INITIAL_SEED_ARTWORKS = [];
 
-const INITIAL_SEED_STUDENTS = [
-  {
-    id: 'stu-101',
-    name: 'Aarav Sharma',
-    email: 'aarav.sharma@gmail.com',
-    phone: '+91 98201 45892',
-    courseId: 'course-oil-mastery',
-    courseTitle: 'The Master Oil Painting Diploma',
-    batchSchedule: 'Saturday & Sunday • 6:00 PM – 8:00 PM IST',
-    enrolledDate: 'Sep 1, 2026',
-    feesPaid: 349,
-    paymentStatus: 'Paid',
-    progressPercent: 68,
-    avatar: 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?q=80&w=150&auto=format&fit=crop'
-  },
-  {
-    id: 'stu-102',
-    name: 'Elena Rostova',
-    email: 'elena.rostova@artacademy.eu',
-    phone: '+44 7700 900077',
-    courseId: 'course-realistic-sketching',
-    courseTitle: 'Foundations of Realistic Sketching & Human Anatomy',
-    batchSchedule: 'Tuesday & Thursday • 7:00 PM – 9:00 PM IST',
-    enrolledDate: 'Sep 3, 2026',
-    feesPaid: 249,
-    paymentStatus: 'Paid',
-    progressPercent: 42,
-    avatar: 'https://images.unsplash.com/photo-1494790108377-be9c29b29330?q=80&w=150&auto=format&fit=crop'
-  },
-  {
-    id: 'stu-103',
-    name: 'Dev Patel',
-    email: 'dev.patel.design@outlook.com',
-    phone: '+91 98112 33455',
-    courseId: 'course-watercolor-fluid',
-    courseTitle: 'Expressive Watercolor & Fluid Pigment Painting',
-    batchSchedule: 'Wednesday & Friday • 6:30 PM – 8:30 PM IST',
-    enrolledDate: 'Aug 28, 2026',
-    feesPaid: 219,
-    paymentStatus: 'Paid',
-    progressPercent: 85,
-    avatar: 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?q=80&w=150&auto=format&fit=crop'
-  },
-  {
-    id: 'stu-104',
-    name: 'Sophia Laurent',
-    email: 'sophia.l@parisart.fr',
-    phone: '+33 6 12 34 56 78',
-    courseId: 'course-oil-mastery',
-    courseTitle: 'The Master Oil Painting Diploma',
-    batchSchedule: 'Saturday & Sunday • 6:00 PM – 8:00 PM IST',
-    enrolledDate: 'Sep 5, 2026',
-    feesPaid: 349,
-    paymentStatus: 'Paid',
-    progressPercent: 20,
-    avatar: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?q=80&w=150&auto=format&fit=crop'
-  }
-];
+const INITIAL_SEED_STUDENTS = [];
 
 const INITIAL_SEED_COURSES = [];
 
@@ -176,36 +76,7 @@ const INITIAL_ARTIST_PROFILE = {
   awardsCount: 12
 };
 
-const INITIAL_SEED_USERS = [
-  {
-    id: 'usr-student-demo',
-    name: 'Aarav Sharma',
-    username: 'aarav_sharma',
-    email: 'student@kuldeepsingh.art',
-    passwordHash: 'eed2fe86b0d10b559378d714458373bde40b474cb768ac2d40ac526272e8ff0e733678fdad3b5857f442bb3e8a67f801575c514ca6442458b96d88cf4678f042',
-    passwordSalt: 'e57ce6adb0e56ad4039fd850e99b6027',
-    role: 'student',
-    isEmailVerified: true,
-    enrolledCourseIds: ['course-oil-mastery', 'course-realistic-sketching'],
-    currentDeviceId: '',
-    currentSessionToken: '',
-    isBlocked: false
-  },
-  {
-    id: 'usr-collector-demo',
-    name: 'Countess Vivienne',
-    username: 'countess_vivienne',
-    email: 'collector@kuldeepsingh.art',
-    passwordHash: 'e0c0adba5aee5bd8802d081e1ec074709c7f00ab4252cd83c70d15ef56e6427329494c0264353b22cde1d7a445568f70ba03d5d93ea673acb5a89573c5d14228',
-    passwordSalt: 'a1b2c3d4e5f60718293a4b5c6d7e8f90',
-    role: 'collector',
-    isEmailVerified: true,
-    enrolledCourseIds: [],
-    currentDeviceId: '',
-    currentSessionToken: '',
-    isBlocked: false
-  }
-];
+const INITIAL_SEED_USERS = [];
 
 // -------------------------------------------------------------
 // READ / WRITE FILE HELPERS (Resilient Fallback & Local Backup)
@@ -448,21 +319,21 @@ async function initMongoDB() {
       }
     }
 
-    // Auto-seed Students if collection is empty
+    // Auto-seed Students ONLY if existing valid students file exists
     const studentCount = await StudentModel.countDocuments();
-    if (studentCount === 0) {
-      const existingStudents = fs.existsSync(STUDENTS_FILE) ? readJsonFile(STUDENTS_FILE, []) : INITIAL_SEED_STUDENTS;
-      if (existingStudents.length > 0) {
+    if (studentCount === 0 && fs.existsSync(STUDENTS_FILE)) {
+      const existingStudents = readJsonFile(STUDENTS_FILE, []);
+      if (Array.isArray(existingStudents) && existingStudents.length > 0) {
         await StudentModel.insertMany(existingStudents);
         console.log(`[BACKEND] Seeded ${existingStudents.length} students into MongoDB Atlas`);
       }
     }
 
-    // Auto-seed Orders if collection is empty
+    // Auto-seed Orders ONLY if existing valid orders file exists
     const orderCount = await OrderModel.countDocuments();
-    if (orderCount === 0) {
-      const existingOrders = readJsonFile(ORDERS_FILE, INITIAL_SEED_ORDERS);
-      if (existingOrders.length > 0) {
+    if (orderCount === 0 && fs.existsSync(ORDERS_FILE)) {
+      const existingOrders = readJsonFile(ORDERS_FILE, []);
+      if (Array.isArray(existingOrders) && existingOrders.length > 0) {
         await OrderModel.insertMany(existingOrders);
         console.log(`[BACKEND] Seeded ${existingOrders.length} orders into MongoDB Atlas`);
       }
@@ -483,14 +354,24 @@ async function initMongoDB() {
       console.log('[BACKEND] Seeded Artist Profile into MongoDB Atlas');
     }
 
-    // Auto-seed Users if collection is empty
+    // Auto-seed Users ONLY if existing valid users file exists
     const userCount = await UserModel.countDocuments();
-    if (userCount === 0) {
-      const existingUsers = readJsonFile(USERS_FILE, INITIAL_SEED_USERS);
-      if (existingUsers.length > 0) {
+    if (userCount === 0 && fs.existsSync(USERS_FILE)) {
+      const existingUsers = readJsonFile(USERS_FILE, []);
+      if (Array.isArray(existingUsers) && existingUsers.length > 0) {
         await UserModel.insertMany(existingUsers);
         console.log(`[BACKEND] Seeded ${existingUsers.length} users into MongoDB Atlas`);
       }
+    }
+
+    // Permanently purge legacy dummy seeds from MongoDB Atlas
+    try {
+      await OrderModel.deleteMany({ id: 'ORD_00932' });
+      await StudentModel.deleteMany({ id: { $in: ['stu-101', 'stu-102', 'stu-103', 'stu-104'] } });
+      await UserModel.deleteMany({ id: { $in: ['usr-student-demo', 'usr-collector-demo'] } });
+      console.log('🧹 [BACKEND] Legacy dummy orders & students permanently purged from MongoDB Atlas');
+    } catch (purgeErr) {
+      console.warn('[BACKEND] Legacy purge note:', purgeErr.message);
     }
   } catch (err) {
     isMongoConnected = false;
@@ -2103,7 +1984,14 @@ app.delete('/api/students/:id', async (req, res) => {
     if (mongoose.connection.readyState === 1) {
       const conditions = [{ id: targetId }];
       if (mongoose.isValidObjectId(targetId)) conditions.push({ _id: targetId });
+      const foundStudent = await StudentModel.findOne({ $or: conditions }).lean();
       await StudentModel.deleteMany({ $or: conditions });
+      if (foundStudent && foundStudent.email) {
+        await UserModel.updateMany(
+          { email: foundStudent.email.toLowerCase() },
+          { $pull: { enrolledCourseIds: foundStudent.courseId } }
+        );
+      }
     }
   } catch (e) {
     console.error('Mongo student delete error:', e);
@@ -2250,26 +2138,28 @@ app.get('/api/orders', async (req, res) => {
   try {
     if (mongoose.connection.readyState === 1) {
       const orders = await OrderModel.find().sort({ createdAt: -1, _id: -1 }).lean();
-      if (orders && orders.length > 0) return res.json(orders);
+      return res.json(orders || []);
     }
   } catch (e) {
     console.error('Mongo orders get error:', e);
   }
-  const orders = readJsonFile(ORDERS_FILE, INITIAL_SEED_ORDERS);
+  const orders = readJsonFile(ORDERS_FILE, []);
   res.json(orders);
 });
 
 app.get('/api/orders/:id', async (req, res) => {
   try {
     if (mongoose.connection.readyState === 1) {
-      const order = await OrderModel.findOne({ id: req.params.id }).lean();
+      const conditions = [{ id: req.params.id }];
+      if (mongoose.isValidObjectId(req.params.id)) conditions.push({ _id: req.params.id });
+      const order = await OrderModel.findOne({ $or: conditions }).lean();
       if (order) return res.json(order);
     }
   } catch (e) {
     console.error('Mongo order get error:', e);
   }
-  const orders = readJsonFile(ORDERS_FILE, INITIAL_SEED_ORDERS);
-  const order = orders.find((o) => o.id === req.params.id);
+  const orders = readJsonFile(ORDERS_FILE, []);
+  const order = orders.find((o) => o.id === req.params.id || String(o._id) === req.params.id);
   if (!order) return res.status(404).json({ error: 'Order not found' });
   res.json(order);
 });
@@ -2449,20 +2339,24 @@ app.put('/api/orders/:id', async (req, res) => {
 });
 
 app.delete('/api/orders/:id', async (req, res) => {
+  const targetId = req.params.id;
   try {
     if (mongoose.connection.readyState === 1) {
-      await OrderModel.deleteOne({ id: req.params.id });
+      const conditions = [{ id: targetId }];
+      if (mongoose.isValidObjectId(targetId)) conditions.push({ _id: targetId });
+      await OrderModel.deleteMany({ $or: conditions });
     }
   } catch (e) {
     console.error('Mongo order delete error:', e);
   }
 
-  const orders = readJsonFile(ORDERS_FILE, INITIAL_SEED_ORDERS);
-  const filtered = orders.filter((o) => o.id !== req.params.id);
+  const orders = readJsonFile(ORDERS_FILE, []);
+  const filtered = orders.filter((o) => o.id !== targetId && String(o._id) !== targetId);
   writeJsonFile(ORDERS_FILE, filtered);
 
-  broadcastUpdate('ORDER_DELETED', { id: req.params.id });
-  res.json({ success: true, id: req.params.id });
+  broadcastUpdate('ORDER_DELETED', { id: targetId });
+  console.log(`[BACKEND] Order Permanently Deleted: ${targetId}`);
+  res.json({ success: true, id: targetId });
 });
 
 app.delete('/api/orders', async (req, res) => {
