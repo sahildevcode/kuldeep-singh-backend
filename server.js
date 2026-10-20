@@ -53,6 +53,75 @@ const INITIAL_SEED_STUDENTS = [];
 
 const INITIAL_SEED_COURSES = [];
 
+const INITIAL_REVIEWS = [
+  {
+    id: 'rev-01',
+    name: 'Eleanor Sterling',
+    role: 'Contemporary Art Collector & Trustee',
+    location: 'Upper East Side, New York',
+    artworkImage: 'https://images.unsplash.com/photo-1579783900882-c0d3dad7b119?q=80&w=900&auto=format&fit=crop',
+    artworkAcquired: 'Symphony of the Solitary Tide',
+    comment: 'Acquiring an original Kuldeep Singh oil canvas was one of the most rewarding additions to our family collection. The physical presence and luminosity when evening sunlight strikes the canvas is extraordinary.',
+    category: 'collector',
+    isActive: true
+  },
+  {
+    id: 'rev-02',
+    name: 'Marcus Davenport',
+    role: 'Interior Architect & Designer',
+    location: 'London & Zurich',
+    artworkImage: 'https://images.unsplash.com/photo-1578301978693-85fa9c0320b9?q=80&w=900&auto=format&fit=crop',
+    artworkAcquired: 'Echoes of the Florentine Dusk',
+    comment: 'The depth of craftsmanship is on par with European museum masters. The framing, documentation, and archival provenance arrived impeccably packed in bespoke wooden crates.',
+    category: 'collector',
+    isActive: true
+  },
+  {
+    id: 'rev-03',
+    name: 'Sophia Chen',
+    role: 'Concept Artist & Masterclass Alumna',
+    location: 'San Francisco, CA',
+    artworkImage: 'https://images.unsplash.com/photo-1549887534-1541e9326642?q=80&w=900&auto=format&fit=crop',
+    courseTaken: 'The Master Oil Painting Diploma',
+    comment: 'I had been terrified of oils for years due to drying times and muddy colors. Kuldeep’s breakdown of glazing and split-primary mixing completely revolutionized my workflow. Worth 10x the tuition.',
+    category: 'student',
+    isActive: true
+  },
+  {
+    id: 'rev-04',
+    name: 'Dr. Liam Thorne',
+    role: 'Surgeon & Figurative Sketcher',
+    location: 'Boston, MA',
+    artworkImage: 'https://images.unsplash.com/photo-1579783902614-a3fb3927b675?q=80&w=900&auto=format&fit=crop',
+    courseTaken: 'Foundations of Realistic Sketching & Human Anatomy',
+    comment: 'Kuldeep explains anatomical drawing with the precision of a surgeon and the soul of a poet. In just 4 weeks my charcoal portraits went from flat sketches to three-dimensional sculptural forms.',
+    category: 'student',
+    isActive: true
+  },
+  {
+    id: 'rev-05',
+    name: 'Pooja Verma',
+    role: 'Upcoming Venetian Oil Glazing Scholar',
+    location: 'New Delhi, India',
+    artworkImage: 'https://images.unsplash.com/photo-1578301978018-3005759f48f7?q=80&w=900&auto=format&fit=crop',
+    courseTaken: 'Venetian Oil Glazing Masterclass',
+    comment: 'I pre-booked the Venetian Glazing upcoming batch immediately after seeing Kuldeep Sir’s live demonstration. His knowledge of historical pigments and multi-layered Grisaille is unmatched in India.',
+    category: 'upcoming',
+    isActive: true
+  },
+  {
+    id: 'rev-06',
+    name: 'Rohan Singhania',
+    role: 'Architect & Hyper-Realism Alumnus',
+    location: 'Mumbai, India',
+    artworkImage: 'https://images.unsplash.com/photo-1579783901586-d88db74b4fe4?q=80&w=900&auto=format&fit=crop',
+    courseTaken: 'Hyper-Realistic Charcoal Anatomy',
+    comment: 'The focus on structural bone landmarks, graphite gradations, and edge control took my architectural sketching to international gallery standards. Kuldeep Sir’s personal feedback on every assignment was incredible.',
+    category: 'student',
+    isActive: true
+  }
+];
+
 const INITIAL_LIVE_STATUS = {
   isLive: false,
   liveStreamUrl: 'https://meet.google.com/ks-studio-atelier',
@@ -290,6 +359,21 @@ const InquirySchema = new mongoose.Schema({
 
 const InquiryModel = mongoose.model('Inquiry', InquirySchema);
 
+const TestimonialSchema = new mongoose.Schema({
+  id: { type: String, unique: true, required: true },
+  name: { type: String, required: true },
+  role: { type: String, default: '' },
+  location: { type: String, default: '' },
+  artworkImage: { type: String, default: '' },
+  comment: { type: String, required: true },
+  category: { type: String, default: 'student' },
+  courseTaken: { type: String, default: '' },
+  artworkAcquired: { type: String, default: '' },
+  isActive: { type: Boolean, default: true }
+}, { timestamps: true, strict: false });
+
+const TestimonialModel = mongoose.model('Testimonial', TestimonialSchema);
+
 let isMongoConnected = false;
 
 async function initMongoDB() {
@@ -362,6 +446,15 @@ async function initMongoDB() {
         await UserModel.insertMany(existingUsers);
         console.log(`[BACKEND] Seeded ${existingUsers.length} users into MongoDB Atlas`);
       }
+    }
+
+    // Auto-seed Testimonials into MongoDB Atlas if collection is empty
+    const testimonialCount = await TestimonialModel.countDocuments();
+    if (testimonialCount === 0) {
+      const existing = fs.existsSync(TESTIMONIALS_FILE) ? readJsonFile(TESTIMONIALS_FILE, []) : [];
+      const toSeed = (Array.isArray(existing) && existing.length > 0) ? existing : INITIAL_REVIEWS;
+      await TestimonialModel.insertMany(toSeed);
+      console.log(`[BACKEND] Seeded ${toSeed.length} testimonials into MongoDB Atlas`);
     }
 
     // Permanently purge legacy dummy seeds from MongoDB Atlas
@@ -1764,15 +1857,37 @@ app.delete('/api/upcoming-courses/:id', async (req, res) => {
 // ==========================================
 
 app.get('/api/testimonials', async (req, res) => {
-  const testimonials = readJsonFile(TESTIMONIALS_FILE, []);
+  try {
+    if (mongoose.connection.readyState === 1) {
+      const list = await TestimonialModel.find().sort({ createdAt: -1, _id: -1 }).lean();
+      if (Array.isArray(list) && list.length > 0) {
+        return res.json({ success: true, count: list.length, testimonials: list });
+      }
+    }
+  } catch (e) {
+    console.error('Mongo testimonials get error:', e);
+  }
+  const testimonials = readJsonFile(TESTIMONIALS_FILE, INITIAL_REVIEWS);
   res.json({ success: true, count: testimonials.length, testimonials });
 });
 
 app.post('/api/testimonials', async (req, res) => {
-  const newTestimonial = req.body;
+  const newTestimonial = { ...req.body };
   if (!newTestimonial.id) {
     newTestimonial.id = 'rev-' + Date.now();
   }
+  try {
+    if (mongoose.connection.readyState === 1) {
+      await TestimonialModel.findOneAndUpdate(
+        { id: newTestimonial.id },
+        newTestimonial,
+        { upsert: true, new: true }
+      );
+    }
+  } catch (e) {
+    console.error('Mongo testimonial create error:', e);
+  }
+
   const testimonials = readJsonFile(TESTIMONIALS_FILE, []);
   testimonials.unshift(newTestimonial);
   writeJsonFile(TESTIMONIALS_FILE, testimonials);
@@ -1783,23 +1898,52 @@ app.post('/api/testimonials', async (req, res) => {
 
 app.put('/api/testimonials/:id', async (req, res) => {
   const targetId = req.params.id;
-  const updates = req.body;
+  const updates = { ...req.body, id: targetId };
+  let updated;
+
+  try {
+    if (mongoose.connection.readyState === 1) {
+      const conditions = [{ id: targetId }];
+      if (mongoose.isValidObjectId(targetId)) conditions.push({ _id: targetId });
+      updated = await TestimonialModel.findOneAndUpdate(
+        { $or: conditions },
+        updates,
+        { upsert: true, new: true }
+      ).lean();
+    }
+  } catch (e) {
+    console.error('Mongo testimonial update error:', e);
+  }
+
   const testimonials = readJsonFile(TESTIMONIALS_FILE, []);
-  const idx = testimonials.findIndex((t) => t.id === targetId);
+  const idx = testimonials.findIndex((t) => t.id === targetId || String(t._id) === targetId);
   if (idx !== -1) {
     testimonials[idx] = { ...testimonials[idx], ...updates };
-    writeJsonFile(TESTIMONIALS_FILE, testimonials);
-    broadcastUpdate('TESTIMONIAL_UPDATED', testimonials[idx]);
-    res.json({ success: true, testimonial: testimonials[idx] });
+    if (!updated) updated = testimonials[idx];
   } else {
-    res.status(404).json({ success: false, message: 'Testimonial not found' });
+    testimonials.push(updates);
+    if (!updated) updated = updates;
   }
+  writeJsonFile(TESTIMONIALS_FILE, testimonials);
+
+  broadcastUpdate('TESTIMONIAL_UPDATED', updated);
+  res.json({ success: true, testimonial: updated });
 });
 
 app.delete('/api/testimonials/:id', async (req, res) => {
   const targetId = req.params.id;
+  try {
+    if (mongoose.connection.readyState === 1) {
+      const conditions = [{ id: targetId }];
+      if (mongoose.isValidObjectId(targetId)) conditions.push({ _id: targetId });
+      await TestimonialModel.deleteMany({ $or: conditions });
+    }
+  } catch (e) {
+    console.error('Mongo testimonial delete error:', e);
+  }
+
   const testimonials = readJsonFile(TESTIMONIALS_FILE, []);
-  const filtered = testimonials.filter((t) => t.id !== targetId);
+  const filtered = testimonials.filter((t) => t.id !== targetId && String(t._id) !== targetId);
   writeJsonFile(TESTIMONIALS_FILE, filtered);
 
   broadcastUpdate('TESTIMONIAL_DELETED', { id: targetId });
