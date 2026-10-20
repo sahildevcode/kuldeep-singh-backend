@@ -1679,6 +1679,11 @@ app.delete('/api/courses/:id/modules/:moduleIndex/lectures/:lectureIndex', async
 
 // Create New Course / Live Batch
 app.post('/api/courses', async (req, res) => {
+  const DUMMY_COURSE_IDS = ['course-oil-mastery', 'course-realistic-sketching', 'course-watercolor-fluid', 'course-color-alchemy', 'course-batch-1792302541776', 'course-batch-1792309037764'];
+  if (DUMMY_COURSE_IDS.includes(req.body?.id)) {
+    return res.status(400).json({ error: 'This course has been permanently deleted' });
+  }
+
   const newCourse = {
     id: req.body.id || `course-${Date.now()}`,
     title: req.body.title || 'Untitled Masterclass Live Batch',
@@ -1735,6 +1740,11 @@ app.post('/api/courses', async (req, res) => {
 
 // Update Course
 app.put('/api/courses/:id', async (req, res) => {
+  const DUMMY_COURSE_IDS = ['course-oil-mastery', 'course-realistic-sketching', 'course-watercolor-fluid', 'course-color-alchemy', 'course-batch-1792302541776', 'course-batch-1792309037764'];
+  if (DUMMY_COURSE_IDS.includes(req.params.id)) {
+    return res.status(400).json({ error: 'This course has been permanently deleted' });
+  }
+
   let updatedCourse;
   try {
     if (mongoose.connection.readyState === 1) {
@@ -2131,6 +2141,11 @@ app.get('/api/artworks/:id', async (req, res) => {
 
 app.post('/api/artworks', async (req, res) => {
   const body = req.body;
+  const DUMMY_ART_IDS = ['art-01', 'art-02', 'art-03', 'art-04', 'art-05', 'art-06', 'art-07', 'art-08'];
+  if (DUMMY_ART_IDS.includes(body.id)) {
+    return res.status(400).json({ error: 'Dummy artwork cannot be created or restored' });
+  }
+
   const newArtwork = {
     id: body.id || `art-${Date.now()}`,
     title: body.title || 'Untitled Artwork',
