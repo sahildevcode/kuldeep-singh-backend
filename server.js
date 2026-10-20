@@ -580,12 +580,14 @@ async function initMongoDB() {
     isMongoConnected = true;
     console.log('✅ [BACKEND] MongoDB Atlas Cloud Database connected successfully!');
 
-    // Auto-seed Artworks if collection is empty
+    // Auto-seed Artworks ONLY if ARTWORKS_FILE exists and has items
     const artCount = await ArtworkModel.countDocuments();
-    if (artCount === 0) {
-      const existingArt = readJsonFile(ARTWORKS_FILE, INITIAL_SEED_ARTWORKS);
-      await ArtworkModel.insertMany(existingArt);
-      console.log(`[BACKEND] Seeded ${existingArt.length} artworks into MongoDB Atlas`);
+    if (artCount === 0 && fs.existsSync(ARTWORKS_FILE)) {
+      const existingArt = readJsonFile(ARTWORKS_FILE, []);
+      if (existingArt.length > 0) {
+        await ArtworkModel.insertMany(existingArt);
+        console.log(`[BACKEND] Seeded ${existingArt.length} artworks into MongoDB Atlas`);
+      }
     }
 
     // Auto-seed Courses if collection is empty
@@ -1774,13 +1776,21 @@ app.post('/api/courses/:id/modules/:moduleIndex/lectures', async (req, res) => {
 app.delete('/api/courses/:id/modules/:moduleIndex/lectures/:lectureIndex', async (req, res) => {
   const modIdx = parseInt(req.params.moduleIndex, 10);
   const lecIdx = parseInt(req.params.lectureIndex, 10);
+  const targetCourseId = req.params.id;
+  const targetLectureId = req.query.lectureId || req.body?.lectureId;
   let updatedCourse;
 
   try {
     if (mongoose.connection.readyState === 1) {
-      const course = await CourseModel.findOne({ id: req.params.id });
+      const conditions = [{ id: targetCourseId }];
+      if (mongoose.isValidObjectId(targetCourseId)) conditions.push({ _id: targetCourseId });
+      const course = await CourseModel.findOne({ $or: conditions });
       if (course && course.modules && course.modules[modIdx] && course.modules[modIdx].lectures) {
-        course.modules[modIdx].lectures = course.modules[modIdx].lectures.filter((_, idx) => idx !== lecIdx);
+        if (targetLectureId) {
+          course.modules[modIdx].lectures = course.modules[modIdx].lectures.filter((l) => l.id !== targetLectureId);
+        } else {
+          course.modules[modIdx].lectures = course.modules[modIdx].lectures.filter((_, idx) => idx !== lecIdx);
+        }
         course.modules[modIdx].lessonsCount = course.modules[modIdx].lectures.length;
         course.modules[modIdx].topics = course.modules[modIdx].lectures.map((l) => l.title);
         const total = course.modules.reduce((acc, m) => acc + (m.lectures ? m.lectures.length : m.lessonsCount), 0);
@@ -1796,10 +1806,14 @@ app.delete('/api/courses/:id/modules/:moduleIndex/lectures/:lectureIndex', async
   }
 
   // Backup to file
-  const courses = readJsonFile(COURSES_FILE, INITIAL_SEED_COURSES);
-  const course = courses.find((c) => c.id === req.params.id);
+  const courses = readJsonFile(COURSES_FILE, []);
+  const course = courses.find((c) => c.id === targetCourseId || c._id === targetCourseId);
   if (course && course.modules && course.modules[modIdx] && course.modules[modIdx].lectures) {
-    course.modules[modIdx].lectures = course.modules[modIdx].lectures.filter((_, idx) => idx !== lecIdx);
+    if (targetLectureId) {
+      course.modules[modIdx].lectures = course.modules[modIdx].lectures.filter((l) => l.id !== targetLectureId);
+    } else {
+      course.modules[modIdx].lectures = course.modules[modIdx].lectures.filter((_, idx) => idx !== lecIdx);
+    }
     course.modules[modIdx].lessonsCount = course.modules[modIdx].lectures.length;
     course.modules[modIdx].topics = course.modules[modIdx].lectures.map((l) => l.title);
     const total = course.modules.reduce((acc, m) => acc + (m.lectures ? m.lectures.length : m.lessonsCount), 0);
@@ -1810,7 +1824,8 @@ app.delete('/api/courses/:id/modules/:moduleIndex/lectures/:lectureIndex', async
 
   if (!updatedCourse) return res.status(404).json({ error: 'Course or lecture not found' });
 
-  broadcastUpdate('LECTURE_DELETED', { courseId: updatedCourse.id, moduleIndex: modIdx, lectureIndex: lecIdx });
+  broadcastUpdate('LECTURE_DELETED', { courseId: updatedCourse.id, moduleIndex: modIdx, lectureIndex: lecIdx, lectureId: targetLectureId });
+  broadcastUpdate('COURSE_UPDATED', updatedCourse);
   res.json({ success: true, course: updatedCourse });
 });
 
@@ -1876,6 +1891,9 @@ app.put('/api/courses/:id', async (req, res) => {
   try {
     if (mongoose.connection.readyState === 1) {
       const existing = await CourseModel.findOne({ id: req.params.id }).lean();
+      if (!existing) {
+        return res.status(404).json({ error: 'Course not found - cannot update deleted course' });
+      }
       let updatePayload = { ...req.body, id: req.params.id };
 
       // If updatePayload explicitly includes modules, respect them and recalculate totalLessons
@@ -1890,14 +1908,14 @@ app.put('/api/courses/:id', async (req, res) => {
       updatedCourse = await CourseModel.findOneAndUpdate(
         { id: req.params.id },
         updatePayload,
-        { new: true, upsert: true }
+        { new: true, upsert: false }
       ).lean();
     }
   } catch (e) {
     console.error('Mongo course update error:', e);
   }
 
-  const courses = readJsonFile(COURSES_FILE, INITIAL_SEED_COURSES);
+  const courses = readJsonFile(COURSES_FILE, []);
   const idx = courses.findIndex((c) => c.id === req.params.id);
   if (idx !== -1) {
     const existingC = courses[idx];
@@ -1908,6 +1926,10 @@ app.put('/api/courses/:id', async (req, res) => {
       payload.modules = existingC.modules;
       payload.totalLessons = existingC.totalLessons;
     }
+    courses[idx] = payload;
+    writeJsonFile(COURSES_FILE, courses);
+    if (!updatedCourse) updatedCourse = courses[idx];
+  }
     courses[idx] = payload;
     writeJsonFile(COURSES_FILE, courses);
     if (!updatedCourse) updatedCourse = courses[idx];
@@ -2234,13 +2256,13 @@ app.delete('/api/students/:id', async (req, res) => {
 app.get('/api/artworks', async (req, res) => {
   try {
     if (mongoose.connection.readyState === 1) {
-      const artworks = await ArtworkModel.find().lean();
-      if (artworks && artworks.length > 0) return res.json(artworks);
+      const artworks = await ArtworkModel.find().sort({ createdAt: -1, _id: -1 }).lean();
+      if (Array.isArray(artworks)) return res.json(artworks);
     }
   } catch (e) {
     console.error('Mongo artworks get error:', e);
   }
-  const artworks = readJsonFile(ARTWORKS_FILE, INITIAL_SEED_ARTWORKS);
+  const artworks = readJsonFile(ARTWORKS_FILE, []);
   res.json(artworks);
 });
 
@@ -2326,20 +2348,24 @@ app.put('/api/artworks/:id', async (req, res) => {
 });
 
 app.delete('/api/artworks/:id', async (req, res) => {
+  const targetId = req.params.id;
   try {
     if (mongoose.connection.readyState === 1) {
-      await ArtworkModel.deleteOne({ id: req.params.id });
+      const conditions = [{ id: targetId }];
+      if (mongoose.isValidObjectId(targetId)) conditions.push({ _id: targetId });
+      await ArtworkModel.deleteMany({ $or: conditions });
     }
   } catch (e) {
     console.error('Mongo artwork delete error:', e);
   }
 
-  const artworks = readJsonFile(ARTWORKS_FILE, INITIAL_SEED_ARTWORKS);
-  const filtered = artworks.filter((a) => a.id !== req.params.id);
+  const artworks = readJsonFile(ARTWORKS_FILE, []);
+  const filtered = artworks.filter((a) => a.id !== targetId && String(a._id) !== targetId);
   writeJsonFile(ARTWORKS_FILE, filtered);
 
-  broadcastUpdate('ARTWORK_DELETED', { id: req.params.id });
-  res.json({ success: true, id: req.params.id });
+  broadcastUpdate('ARTWORK_DELETED', { id: targetId });
+  console.log(`[BACKEND] Artwork Permanently Deleted: ${targetId}`);
+  res.json({ success: true, id: targetId });
 });
 
 // ==========================================
