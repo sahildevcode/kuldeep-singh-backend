@@ -1625,6 +1625,13 @@ app.delete('/api/courses/:id/modules/:moduleIndex/lectures/:lectureIndex', async
       if (mongoose.isValidObjectId(targetCourseId)) conditions.push({ _id: targetCourseId });
       const course = await CourseModel.findOne({ $or: conditions });
       if (course && course.modules && course.modules[modIdx] && course.modules[modIdx].lectures) {
+        const deletedLec = targetLectureId
+          ? course.modules[modIdx].lectures.find((l) => l.id === targetLectureId)
+          : course.modules[modIdx].lectures[lecIdx];
+        if (deletedLec?.videoUrl) {
+          deleteVideoFromBunny(deletedLec.videoUrl).catch(() => {});
+        }
+
         if (targetLectureId) {
           course.modules[modIdx].lectures = course.modules[modIdx].lectures.filter((l) => l.id !== targetLectureId);
         } else {
@@ -1793,6 +1800,16 @@ app.delete('/api/courses/:id', async (req, res) => {
     if (mongoose.connection.readyState === 1) {
       const conditions = [{ id: targetId }];
       if (mongoose.isValidObjectId(targetId)) conditions.push({ _id: targetId });
+      const courseInDb = await CourseModel.findOne({ $or: conditions }).lean();
+      if (courseInDb?.modules) {
+        for (const mod of courseInDb.modules) {
+          if (Array.isArray(mod.lectures)) {
+            for (const lec of mod.lectures) {
+              if (lec.videoUrl) deleteVideoFromBunny(lec.videoUrl).catch(() => {});
+            }
+          }
+        }
+      }
       await CourseModel.deleteMany({ $or: conditions });
     }
   } catch (e) {
@@ -1800,6 +1817,16 @@ app.delete('/api/courses/:id', async (req, res) => {
   }
 
   const courses = readJsonFile(COURSES_FILE, []);
+  const targetCourse = courses.find((c) => c.id === targetId || c._id === targetId);
+  if (targetCourse?.modules) {
+    for (const mod of targetCourse.modules) {
+      if (Array.isArray(mod.lectures)) {
+        for (const lec of mod.lectures) {
+          if (lec.videoUrl) deleteVideoFromBunny(lec.videoUrl).catch(() => {});
+        }
+      }
+    }
+  }
   const filtered = courses.filter((c) => c.id !== targetId && c._id !== targetId);
   writeJsonFile(COURSES_FILE, filtered);
 
@@ -2832,6 +2859,57 @@ app.post('/api/upload/video', upload.single('video'), async (req, res) => {
     console.error('❌ [BUNNY STREAM] Upload Error:', err);
     return res.status(500).json({ error: 'Video upload to Bunny Stream failed', details: err.message });
   }
+});
+
+// Helper to extract Bunny Video GUID from any URL or string
+function extractBunnyVideoId(urlOrGuid) {
+  if (!urlOrGuid || typeof urlOrGuid !== 'string') return null;
+  const match = urlOrGuid.match(/[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}/);
+  return match ? match[0] : null;
+}
+
+// Function to delete video from Bunny Stream CDN
+async function deleteVideoFromBunny(videoIdOrUrl) {
+  const videoId = extractBunnyVideoId(videoIdOrUrl);
+  if (!videoId) return { success: false, reason: 'Invalid or non-Bunny video ID' };
+
+  try {
+    const res = await fetch(`https://video.bunnycdn.com/library/${BUNNY_LIBRARY_ID}/videos/${videoId}`, {
+      method: 'DELETE',
+      headers: {
+        'AccessKey': BUNNY_API_KEY,
+        'accept': 'application/json'
+      }
+    });
+
+    if (res.ok) {
+      console.log(`✅ [BUNNY STREAM] Video permanently deleted from CDN: ${videoId}`);
+      return { success: true, videoId };
+    } else {
+      const errText = await res.text();
+      console.warn(`⚠️ [BUNNY STREAM] Delete warning for ${videoId}: ${res.status} ${errText}`);
+      return { success: false, status: res.status, error: errText };
+    }
+  } catch (err) {
+    console.error(`❌ [BUNNY STREAM] Delete exception for ${videoId}:`, err);
+    return { success: false, error: err.message };
+  }
+}
+
+// DELETE endpoint for Bunny Videos (by ID in URL or query)
+app.delete('/api/upload/bunny-video/:videoId', async (req, res) => {
+  const result = await deleteVideoFromBunny(req.params.videoId);
+  res.json(result);
+});
+
+// POST endpoint for Bunny Video Deletion (accepts { videoId } or { videoUrl })
+app.post('/api/upload/bunny-delete', async (req, res) => {
+  const target = req.body.videoId || req.body.videoUrl;
+  if (!target) {
+    return res.status(400).json({ error: 'videoId or videoUrl is required' });
+  }
+  const result = await deleteVideoFromBunny(target);
+  res.json(result);
 });
 
 // -------------------------------------------------------------
