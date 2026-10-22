@@ -2597,8 +2597,8 @@ app.put('/api/profile', async (req, res) => {
 // Helper function to create Razorpay orders
 const createRazorpayOrder = async (req, res) => {
   const { amount, currency = 'INR', receipt, notes } = req.body;
-  const razorpayKeyId = process.env.RAZORPAY_KEY_ID;
-  const razorpayKeySecret = process.env.RAZORPAY_KEY_SECRET;
+  const razorpayKeyId = process.env.RAZORPAY_KEY_ID || 'rzp_live_TpFxRsfihf9Itb';
+  const razorpayKeySecret = process.env.RAZORPAY_KEY_SECRET || '3niiRU2IkvdMlcsSwDuq1YVM';
 
   if (!razorpayKeyId || !razorpayKeySecret) {
     return res.status(401).json({ error: 'Razorpay API credentials not configured in environment' });
@@ -2645,7 +2645,7 @@ const verifyRazorpaySignature = (req, res) => {
   const razorpay_order_id = req.body.razorpay_order_id || req.body.order_id;
   const razorpay_payment_id = req.body.razorpay_payment_id || req.body.payment_id;
   const razorpay_signature = req.body.razorpay_signature || req.body.signature;
-  const razorpayKeySecret = process.env.RAZORPAY_KEY_SECRET;
+  const razorpayKeySecret = process.env.RAZORPAY_KEY_SECRET || '3niiRU2IkvdMlcsSwDuq1YVM';
 
   if (!razorpayKeySecret) {
     return res.status(401).json({ error: 'Razorpay Secret Key not configured in environment' });
