@@ -176,6 +176,21 @@ function writeJsonFile(filePath, data) {
   }
 }
 
+// Sync MongoDB collection to JSON file (MongoDB = source of truth, JSON = backup only)
+async function syncMongoToJson(Model, jsonFilePath, sortOptions = { createdAt: -1, _id: -1 }) {
+  try {
+    if (mongoose.connection.readyState === 1) {
+      const allDocs = await Model.find().sort(sortOptions).lean();
+      writeJsonFile(jsonFilePath, allDocs);
+    }
+  } catch (err) {
+    console.error(`[SYNC] Error syncing ${jsonFilePath} from MongoDB:`, err.message);
+  }
+}
+
+// Seeding flag file path - prevents re-seeding deleted data
+const SEED_FLAG_FILE = path.join(DATA_DIR, '.seeded_flag');
+
 // -------------------------------------------------------------
 // MONGOOSE SCHEMAS & MODELS (Flexible Schema - Preserves All Fields)
 // -------------------------------------------------------------
@@ -385,9 +400,12 @@ async function initMongoDB() {
     isMongoConnected = true;
     console.log('✅ [BACKEND] MongoDB Atlas Cloud Database connected successfully!');
 
-    // Auto-seed Artworks ONLY if ARTWORKS_FILE exists and has items
+    // Only seed from JSON if this is the VERY FIRST time (seed flag not present)
+    const isFirstSeed = !fs.existsSync(SEED_FLAG_FILE);
+
+    // Auto-seed Artworks ONLY on first seed & if JSON file has data
     const artCount = await ArtworkModel.countDocuments();
-    if (artCount === 0 && fs.existsSync(ARTWORKS_FILE)) {
+    if (artCount === 0 && isFirstSeed && fs.existsSync(ARTWORKS_FILE)) {
       const existingArt = readJsonFile(ARTWORKS_FILE, []);
       if (existingArt.length > 0) {
         await ArtworkModel.insertMany(existingArt);
@@ -395,30 +413,33 @@ async function initMongoDB() {
       }
     }
 
-    // Auto-seed Courses if collection is empty
+    // Auto-seed Courses ONLY on first seed & if JSON has real data
     const courseCount = await CourseModel.countDocuments();
-    if (courseCount === 0) {
-      const existingCourses = readJsonFile(COURSES_FILE, []);
+    if (courseCount === 0 && isFirstSeed) {
+      const existingCourses = readJsonFile(COURSES_FILE, [])
+        .filter(c => !['course-oil-mastery', 'course-realistic-sketching', 'course-watercolor-fluid', 'course-color-alchemy'].includes(c.id));
       if (Array.isArray(existingCourses) && existingCourses.length > 0) {
         await CourseModel.insertMany(existingCourses);
         console.log(`[BACKEND] Seeded ${existingCourses.length} courses into MongoDB Atlas`);
       }
     }
 
-    // Auto-seed Students ONLY if existing valid students file exists
+    // Auto-seed Students ONLY on first seed & if JSON file has data
     const studentCount = await StudentModel.countDocuments();
-    if (studentCount === 0 && fs.existsSync(STUDENTS_FILE)) {
-      const existingStudents = readJsonFile(STUDENTS_FILE, []);
+    if (studentCount === 0 && isFirstSeed && fs.existsSync(STUDENTS_FILE)) {
+      const existingStudents = readJsonFile(STUDENTS_FILE, [])
+        .filter(s => !['stu-101', 'stu-102', 'stu-103', 'stu-104'].includes(s.id));
       if (Array.isArray(existingStudents) && existingStudents.length > 0) {
         await StudentModel.insertMany(existingStudents);
         console.log(`[BACKEND] Seeded ${existingStudents.length} students into MongoDB Atlas`);
       }
     }
 
-    // Auto-seed Orders ONLY if existing valid orders file exists
+    // Auto-seed Orders ONLY on first seed & if JSON file has data
     const orderCount = await OrderModel.countDocuments();
-    if (orderCount === 0 && fs.existsSync(ORDERS_FILE)) {
-      const existingOrders = readJsonFile(ORDERS_FILE, []);
+    if (orderCount === 0 && isFirstSeed && fs.existsSync(ORDERS_FILE)) {
+      const existingOrders = readJsonFile(ORDERS_FILE, [])
+        .filter(o => o.id !== 'ORD_00932');
       if (Array.isArray(existingOrders) && existingOrders.length > 0) {
         await OrderModel.insertMany(existingOrders);
         console.log(`[BACKEND] Seeded ${existingOrders.length} orders into MongoDB Atlas`);
@@ -440,34 +461,51 @@ async function initMongoDB() {
       console.log('[BACKEND] Seeded Artist Profile into MongoDB Atlas');
     }
 
-    // Auto-seed Users ONLY if existing valid users file exists
+    // Auto-seed Users ONLY on first seed & if JSON file has data
     const userCount = await UserModel.countDocuments();
-    if (userCount === 0 && fs.existsSync(USERS_FILE)) {
-      const existingUsers = readJsonFile(USERS_FILE, []);
+    if (userCount === 0 && isFirstSeed && fs.existsSync(USERS_FILE)) {
+      const existingUsers = readJsonFile(USERS_FILE, [])
+        .filter(u => !['usr-student-demo', 'usr-collector-demo'].includes(u.id));
       if (Array.isArray(existingUsers) && existingUsers.length > 0) {
         await UserModel.insertMany(existingUsers);
         console.log(`[BACKEND] Seeded ${existingUsers.length} users into MongoDB Atlas`);
       }
     }
 
-    // Auto-seed Testimonials into MongoDB Atlas if collection is empty
+    // Auto-seed Testimonials: ONLY use real data from JSON, never fake INITIAL_REVIEWS
     const testimonialCount = await TestimonialModel.countDocuments();
-    if (testimonialCount === 0) {
-      const existing = fs.existsSync(TESTIMONIALS_FILE) ? readJsonFile(TESTIMONIALS_FILE, []) : [];
-      const toSeed = (Array.isArray(existing) && existing.length > 0) ? existing : INITIAL_REVIEWS;
-      await TestimonialModel.insertMany(toSeed);
-      console.log(`[BACKEND] Seeded ${toSeed.length} testimonials into MongoDB Atlas`);
+    if (testimonialCount === 0 && fs.existsSync(TESTIMONIALS_FILE)) {
+      const existing = readJsonFile(TESTIMONIALS_FILE, []);
+      if (Array.isArray(existing) && existing.length > 0) {
+        await TestimonialModel.insertMany(existing);
+        console.log(`[BACKEND] Seeded ${existing.length} testimonials into MongoDB Atlas`);
+      }
     }
 
-    // Permanently purge legacy dummy seeds from MongoDB Atlas
+    // Write seed flag so we never re-seed from stale JSON again
+    if (isFirstSeed) {
+      fs.writeFileSync(SEED_FLAG_FILE, JSON.stringify({ seededAt: new Date().toISOString() }));
+      console.log('✅ [BACKEND] Seed flag written — future restarts will NOT re-seed from JSON files');
+    }
+
+    // Permanently purge ALL legacy dummy/test data from MongoDB Atlas
     try {
-      await OrderModel.deleteMany({ id: 'ORD_00932' });
+      await OrderModel.deleteMany({ id: { $in: ['ORD_00932'] } });
       await StudentModel.deleteMany({ id: { $in: ['stu-101', 'stu-102', 'stu-103', 'stu-104'] } });
       await UserModel.deleteMany({ id: { $in: ['usr-student-demo', 'usr-collector-demo'] } });
-      console.log('🧹 [BACKEND] Legacy dummy orders & students permanently purged from MongoDB Atlas');
+      await CourseModel.deleteMany({ id: { $in: ['course-oil-mastery', 'course-realistic-sketching', 'course-watercolor-fluid', 'course-color-alchemy', 'course-batch-1792302541776', 'course-batch-1792309037764'] } });
+      console.log('🧹 [BACKEND] All legacy dummy data permanently purged from MongoDB Atlas');
     } catch (purgeErr) {
       console.warn('[BACKEND] Legacy purge note:', purgeErr.message);
     }
+
+    // Sync MongoDB → JSON files (MongoDB is source of truth, JSON is emergency backup)
+    await syncMongoToJson(ArtworkModel, ARTWORKS_FILE);
+    await syncMongoToJson(CourseModel, COURSES_FILE);
+    await syncMongoToJson(StudentModel, STUDENTS_FILE);
+    await syncMongoToJson(OrderModel, ORDERS_FILE);
+    console.log('✅ [BACKEND] JSON backup files synced from MongoDB Atlas');
+
   } catch (err) {
     isMongoConnected = false;
     console.warn('⚠️ [BACKEND] MongoDB Atlas connection warning:', err.message);
@@ -1525,7 +1563,9 @@ app.delete('/api/users/:id', async (req, res) => {
 // 2. COURSES & LECTURES API
 // ==========================================
 
-const DUMMY_COURSE_IDS = ['course-oil-mastery', 'course-realistic-sketching', 'course-watercolor-fluid', 'course-color-alchemy'];
+const ALL_DUMMY_COURSE_IDS = ['course-oil-mastery', 'course-realistic-sketching', 'course-watercolor-fluid', 'course-color-alchemy', 'course-batch-1792302541776', 'course-batch-1792309037764'];
+
+const DUMMY_COURSE_IDS = ALL_DUMMY_COURSE_IDS;
 
 app.get('/api/courses', async (req, res) => {
   try {
@@ -1533,15 +1573,24 @@ app.get('/api/courses', async (req, res) => {
       await mongoose.connection.asPromise().catch(() => {});
     }
     if (mongoose.connection.readyState === 1) {
-      await CourseModel.deleteMany({ id: { $in: DUMMY_COURSE_IDS } }).catch(() => {});
-      const courses = await CourseModel.find({ id: { $nin: DUMMY_COURSE_IDS } }).lean();
-      if (Array.isArray(courses)) return res.json(courses);
+      // FIX: Do NOT delete inside GET endpoint — only filter out dummy IDs
+      const courses = await CourseModel.find({ id: { $nin: ALL_DUMMY_COURSE_IDS } }).lean();
+      if (Array.isArray(courses)) {
+        // FIX: Compute real studentsEnrolled count dynamically from students collection
+        const enriched = await Promise.all(courses.map(async (course) => {
+          try {
+            const realCount = await StudentModel.countDocuments({ courseId: course.id });
+            return { ...course, studentsEnrolled: realCount };
+          } catch { return course; }
+        }));
+        return res.json(enriched);
+      }
     }
   } catch (e) {
     console.error('Mongo courses get error:', e);
   }
   const courses = readJsonFile(COURSES_FILE, []);
-  res.json(courses.filter((c) => !DUMMY_COURSE_IDS.includes(c.id)));
+  res.json(courses.filter((c) => !ALL_DUMMY_COURSE_IDS.includes(c.id)));
 });
 
 app.get('/api/courses/:id', async (req, res) => {
@@ -1677,8 +1726,7 @@ app.delete('/api/courses/:id/modules/:moduleIndex/lectures/:lectureIndex', async
 
 // Create New Course / Live Batch
 app.post('/api/courses', async (req, res) => {
-  const DUMMY_COURSE_IDS = ['course-oil-mastery', 'course-realistic-sketching', 'course-watercolor-fluid', 'course-color-alchemy', 'course-batch-1792302541776', 'course-batch-1792309037764'];
-  if (DUMMY_COURSE_IDS.includes(req.body?.id)) {
+  if (ALL_DUMMY_COURSE_IDS.includes(req.body?.id)) {
     return res.status(400).json({ error: 'This course has been permanently deleted' });
   }
 
@@ -1722,14 +1770,20 @@ app.post('/api/courses', async (req, res) => {
   try {
     if (mongoose.connection.readyState === 1) {
       await CourseModel.findOneAndUpdate({ id: newCourse.id }, newCourse, { upsert: true });
+      // FIX: Sync JSON from MongoDB after write (MongoDB = source of truth)
+      await syncMongoToJson(CourseModel, COURSES_FILE);
+    } else {
+      // Offline fallback: write only to JSON
+      const courses = readJsonFile(COURSES_FILE, []);
+      courses.unshift(newCourse);
+      writeJsonFile(COURSES_FILE, courses);
     }
   } catch (e) {
     console.error('Mongo course create error:', e);
+    const courses = readJsonFile(COURSES_FILE, []);
+    courses.unshift(newCourse);
+    writeJsonFile(COURSES_FILE, courses);
   }
-
-  const courses = readJsonFile(COURSES_FILE, INITIAL_SEED_COURSES);
-  courses.unshift(newCourse);
-  writeJsonFile(COURSES_FILE, courses);
 
   broadcastUpdate('COURSE_ADDED', newCourse);
   console.log(`[BACKEND] New Course Created: "${newCourse.title}" (#${newCourse.id})`);
@@ -1738,8 +1792,7 @@ app.post('/api/courses', async (req, res) => {
 
 // Update Course
 app.put('/api/courses/:id', async (req, res) => {
-  const DUMMY_COURSE_IDS = ['course-oil-mastery', 'course-realistic-sketching', 'course-watercolor-fluid', 'course-color-alchemy', 'course-batch-1792302541776', 'course-batch-1792309037764'];
-  if (DUMMY_COURSE_IDS.includes(req.params.id)) {
+  if (ALL_DUMMY_COURSE_IDS.includes(req.params.id)) {
     return res.status(400).json({ error: 'This course has been permanently deleted' });
   }
 
@@ -1766,25 +1819,29 @@ app.put('/api/courses/:id', async (req, res) => {
         updatePayload,
         { new: true, upsert: false }
       ).lean();
+
+      // FIX: Sync JSON from MongoDB after write
+      await syncMongoToJson(CourseModel, COURSES_FILE);
+    } else {
+      // Offline fallback: update JSON directly
+      const courses = readJsonFile(COURSES_FILE, []);
+      const idx = courses.findIndex((c) => c.id === req.params.id);
+      if (idx !== -1) {
+        const existingC = courses[idx];
+        let payload = { ...courses[idx], ...req.body, id: courses[idx].id };
+        if (Array.isArray(payload.modules)) {
+          payload.totalLessons = payload.modules.reduce((acc, m) => acc + (Array.isArray(m.lectures) ? m.lectures.length : (m.lessonsCount || 0)), 0);
+        } else if (existingC && Array.isArray(existingC.modules)) {
+          payload.modules = existingC.modules;
+          payload.totalLessons = existingC.totalLessons;
+        }
+        courses[idx] = payload;
+        writeJsonFile(COURSES_FILE, courses);
+        updatedCourse = courses[idx];
+      }
     }
   } catch (e) {
     console.error('Mongo course update error:', e);
-  }
-
-  const courses = readJsonFile(COURSES_FILE, []);
-  const idx = courses.findIndex((c) => c.id === req.params.id);
-  if (idx !== -1) {
-    const existingC = courses[idx];
-    let payload = { ...courses[idx], ...req.body, id: courses[idx].id };
-    if (Array.isArray(payload.modules)) {
-      payload.totalLessons = payload.modules.reduce((acc, m) => acc + (Array.isArray(m.lectures) ? m.lectures.length : (m.lessonsCount || 0)), 0);
-    } else if (existingC && Array.isArray(existingC.modules)) {
-      payload.modules = existingC.modules;
-      payload.totalLessons = existingC.totalLessons;
-    }
-    courses[idx] = payload;
-    writeJsonFile(COURSES_FILE, courses);
-    if (!updatedCourse) updatedCourse = courses[idx];
   }
 
   if (!updatedCourse) return res.status(404).json({ error: 'Course not found' });
@@ -1811,24 +1868,27 @@ app.delete('/api/courses/:id', async (req, res) => {
         }
       }
       await CourseModel.deleteMany({ $or: conditions });
+      // FIX: Sync JSON from MongoDB after delete (so JSON never has deleted courses)
+      await syncMongoToJson(CourseModel, COURSES_FILE);
+    } else {
+      // Offline fallback
+      const courses = readJsonFile(COURSES_FILE, []);
+      const targetCourse = courses.find((c) => c.id === targetId || c._id === targetId);
+      if (targetCourse?.modules) {
+        for (const mod of targetCourse.modules) {
+          if (Array.isArray(mod.lectures)) {
+            for (const lec of mod.lectures) {
+              if (lec.videoUrl) deleteVideoFromBunny(lec.videoUrl).catch(() => {});
+            }
+          }
+        }
+      }
+      const filtered = courses.filter((c) => c.id !== targetId && c._id !== targetId);
+      writeJsonFile(COURSES_FILE, filtered);
     }
   } catch (e) {
     console.error('Mongo course delete error:', e);
   }
-
-  const courses = readJsonFile(COURSES_FILE, []);
-  const targetCourse = courses.find((c) => c.id === targetId || c._id === targetId);
-  if (targetCourse?.modules) {
-    for (const mod of targetCourse.modules) {
-      if (Array.isArray(mod.lectures)) {
-        for (const lec of mod.lectures) {
-          if (lec.videoUrl) deleteVideoFromBunny(lec.videoUrl).catch(() => {});
-        }
-      }
-    }
-  }
-  const filtered = courses.filter((c) => c.id !== targetId && c._id !== targetId);
-  writeJsonFile(COURSES_FILE, filtered);
 
   broadcastUpdate('COURSE_DELETED', { id: targetId });
   res.json({ success: true, message: `Course ${targetId} deleted` });
