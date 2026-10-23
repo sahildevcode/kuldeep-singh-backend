@@ -177,11 +177,21 @@ function writeJsonFile(filePath, data) {
 }
 
 // Sync MongoDB collection to JSON file (MongoDB = source of truth, JSON = backup only)
-async function syncMongoToJson(Model, jsonFilePath, sortOptions = { createdAt: -1, _id: -1 }) {
+async function syncMongoToJson(Model, jsonFilePath, sortOptions = { _id: -1 }) {
   try {
     if (mongoose.connection.readyState === 1) {
-      const allDocs = await Model.find().sort(sortOptions).lean();
-      writeJsonFile(jsonFilePath, allDocs);
+      const projection = jsonFilePath.includes('artworks') ? { detailImages: 0 } : {};
+      const allDocs = await Model.find({}, projection).sort(sortOptions).lean();
+      if (Array.isArray(allDocs) && allDocs.length > 0) {
+        const cleaned = allDocs.map(d => {
+          const { _id, __v, ...rest } = d;
+          return { ...rest, id: rest.id || String(_id), ...(jsonFilePath.includes('artworks') ? { detailImages: [] } : {}) };
+        });
+        writeJsonFile(jsonFilePath, cleaned);
+        if (jsonFilePath.includes('artworks') && typeof updateCachedArtworks === 'function') {
+          updateCachedArtworks(cleaned);
+        }
+      }
     }
   } catch (err) {
     console.error(`[SYNC] Error syncing ${jsonFilePath} from MongoDB:`, err.message);
@@ -2243,32 +2253,64 @@ app.delete('/api/students/:id', async (req, res) => {
 // 4. ARTWORKS API
 // ==========================================
 
+// In-memory cache for ultra-fast instant responses (<5ms)
+let cachedArtworks = readJsonFile(ARTWORKS_FILE, []);
+
+function updateCachedArtworks(newList) {
+  if (Array.isArray(newList) && newList.length > 0) {
+    cachedArtworks = newList;
+  }
+}
+
+app.get('/api/ping', (req, res) => {
+  res.json({ status: 'ok', timestamp: Date.now(), uptime: process.uptime() });
+});
+
+app.get('/api/health', (req, res) => {
+  res.json({
+    status: 'ok',
+    uptime: process.uptime(),
+    artworksCount: cachedArtworks.length,
+    mongoReadyState: mongoose.connection.readyState
+  });
+});
+
 app.get('/api/artworks', async (req, res) => {
+  if (Array.isArray(cachedArtworks) && cachedArtworks.length > 0) {
+    return res.json(cachedArtworks);
+  }
   try {
     if (mongoose.connection.readyState === 1) {
-      const artworks = await ArtworkModel.find().sort({ createdAt: -1, _id: -1 }).lean();
-      if (Array.isArray(artworks)) return res.json(artworks);
+      const artworks = await ArtworkModel.find({}, { detailImages: 0 }).sort({ _id: -1 }).lean();
+      if (Array.isArray(artworks) && artworks.length > 0) {
+        cachedArtworks = artworks.map((d) => {
+          const { _id, __v, ...rest } = d;
+          return { ...rest, id: rest.id || String(_id), detailImages: [] };
+        });
+        writeJsonFile(ARTWORKS_FILE, cachedArtworks);
+        return res.json(cachedArtworks);
+      }
     }
   } catch (e) {
-    console.error('Mongo artworks get error:', e);
+    console.error('Mongo artworks get error:', e.message);
   }
   const artworks = readJsonFile(ARTWORKS_FILE, []);
+  cachedArtworks = artworks;
   res.json(artworks);
 });
 
 app.get('/api/artworks/:id', async (req, res) => {
+  const item = cachedArtworks.find((a) => a.id === req.params.id || String(a._id) === req.params.id);
+  if (item) return res.json(item);
   try {
     if (mongoose.connection.readyState === 1) {
-      const item = await ArtworkModel.findOne({ id: req.params.id }).lean();
-      if (item) return res.json(item);
+      const mongoItem = await ArtworkModel.findOne({ id: req.params.id }).lean();
+      if (mongoItem) return res.json(mongoItem);
     }
   } catch (e) {
-    console.error('Mongo artwork get error:', e);
+    console.error('Mongo artwork get error:', e.message);
   }
-  const artworks = readJsonFile(ARTWORKS_FILE, INITIAL_SEED_ARTWORKS);
-  const item = artworks.find((a) => a.id === req.params.id);
-  if (!item) return res.status(404).json({ error: 'Artwork not found' });
-  res.json(item);
+  res.status(404).json({ error: 'Artwork not found' });
 });
 
 app.post('/api/artworks', async (req, res) => {
@@ -2295,72 +2337,71 @@ app.post('/api/artworks', async (req, res) => {
     featured: Boolean(body.featured),
     paletteColors: Array.isArray(body.paletteColors) && body.paletteColors.length > 0 ? body.paletteColors : ['#0E2A47', '#C5A059', '#E2DDD5'],
     weight: body.weight || '5 kg',
-    varnishType: body.varnishType || 'Archival Satin Varnish'
+    varnishType: body.varnishType || 'Archival Satin Varnish',
+    createdAt: new Date().toISOString()
   };
 
-  try {
-    if (mongoose.connection.readyState === 1) {
-      await ArtworkModel.findOneAndUpdate({ id: newArtwork.id }, newArtwork, { upsert: true });
-    }
-  } catch (e) {
-    console.error('Mongo artwork create error:', e);
+  // 1. Immediately update in-memory cache
+  const existingIdx = cachedArtworks.findIndex((a) => a.id === newArtwork.id);
+  if (existingIdx !== -1) {
+    cachedArtworks[existingIdx] = newArtwork;
+  } else {
+    cachedArtworks.unshift(newArtwork);
   }
 
-  const artworks = readJsonFile(ARTWORKS_FILE, INITIAL_SEED_ARTWORKS);
-  artworks.unshift(newArtwork);
-  writeJsonFile(ARTWORKS_FILE, artworks);
+  // 2. Persist to local JSON file
+  writeJsonFile(ARTWORKS_FILE, cachedArtworks);
 
+  // 3. Real-time broadcast to all clients
   broadcastUpdate('ARTWORK_CREATED', newArtwork);
   console.log(`[BACKEND] New Artwork Added: "${newArtwork.title}" (#${newArtwork.id}) - ₹${newArtwork.price}`);
+
+  // 4. Return success immediately (zero delay!)
   res.status(201).json({ success: true, artwork: newArtwork });
+
+  // 5. Asynchronously persist to MongoDB Atlas
+  if (mongoose.connection.readyState === 1) {
+    ArtworkModel.findOneAndUpdate({ id: newArtwork.id }, newArtwork, { upsert: true }).catch((e) =>
+      console.error('Async Mongo artwork insert error:', e.message)
+    );
+  }
 });
 
 app.put('/api/artworks/:id', async (req, res) => {
-  let updated;
-  try {
-    if (mongoose.connection.readyState === 1) {
-      updated = await ArtworkModel.findOneAndUpdate(
-        { id: req.params.id },
-        { ...req.body, id: req.params.id },
-        { new: true }
-      ).lean();
-    }
-  } catch (e) {
-    console.error('Mongo artwork update error:', e);
-  }
-
-  const artworks = readJsonFile(ARTWORKS_FILE, INITIAL_SEED_ARTWORKS);
-  const idx = artworks.findIndex((a) => a.id === req.params.id);
+  const targetId = req.params.id;
+  const idx = cachedArtworks.findIndex((a) => a.id === targetId || String(a._id) === targetId);
   if (idx !== -1) {
-    artworks[idx] = { ...artworks[idx], ...req.body, id: artworks[idx].id };
-    writeJsonFile(ARTWORKS_FILE, artworks);
-    if (!updated) updated = artworks[idx];
-  }
+    const updated = { ...cachedArtworks[idx], ...req.body, id: cachedArtworks[idx].id, updatedAt: new Date().toISOString() };
+    cachedArtworks[idx] = updated;
+    writeJsonFile(ARTWORKS_FILE, cachedArtworks);
+    broadcastUpdate('ARTWORK_UPDATED', updated);
+    res.json({ success: true, artwork: updated });
 
-  if (!updated) return res.status(404).json({ error: 'Artwork not found' });
-  broadcastUpdate('ARTWORK_UPDATED', updated);
-  res.json({ success: true, artwork: updated });
+    if (mongoose.connection.readyState === 1) {
+      ArtworkModel.findOneAndUpdate({ id: targetId }, { ...req.body, id: targetId }, { new: true }).catch((e) =>
+        console.error('Async Mongo artwork update error:', e.message)
+      );
+    }
+  } else {
+    res.status(404).json({ error: 'Artwork not found' });
+  }
 });
 
 app.delete('/api/artworks/:id', async (req, res) => {
   const targetId = req.params.id;
-  try {
-    if (mongoose.connection.readyState === 1) {
-      const conditions = [{ id: targetId }];
-      if (mongoose.isValidObjectId(targetId)) conditions.push({ _id: targetId });
-      await ArtworkModel.deleteMany({ $or: conditions });
-    }
-  } catch (e) {
-    console.error('Mongo artwork delete error:', e);
-  }
-
-  const artworks = readJsonFile(ARTWORKS_FILE, []);
-  const filtered = artworks.filter((a) => a.id !== targetId && String(a._id) !== targetId);
-  writeJsonFile(ARTWORKS_FILE, filtered);
-
+  cachedArtworks = cachedArtworks.filter((a) => a.id !== targetId && String(a._id) !== targetId);
+  writeJsonFile(ARTWORKS_FILE, cachedArtworks);
   broadcastUpdate('ARTWORK_DELETED', { id: targetId });
   console.log(`[BACKEND] Artwork Permanently Deleted: ${targetId}`);
   res.json({ success: true, id: targetId });
+
+  if (mongoose.connection.readyState === 1) {
+    const conditions = [{ id: targetId }];
+    if (mongoose.isValidObjectId(targetId)) conditions.push({ _id: targetId });
+    ArtworkModel.deleteMany({ $or: conditions }).catch((e) =>
+      console.error('Async Mongo artwork delete error:', e.message)
+    );
+  }
 });
 
 // ==========================================
@@ -3080,3 +3121,12 @@ app.listen(PORT, '0.0.0.0', () => {
   console.log(`💳 Razorpay Gateway: ${process.env.RAZORPAY_KEY_ID ? 'Configured' : 'Demo Simulator Active'}`);
   console.log(`====================================================`);
 });
+
+// 24/7 Keep-Alive self-pulse (Keeps Render instance warm & responsive)
+setInterval(() => {
+  const pingUrl = `https://kuldeep-singh-backend-q1di.onrender.com/api/ping`;
+  fetch(pingUrl)
+    .then((r) => r.json())
+    .then(() => console.log('⚡ [24/7 KEEP-ALIVE] Render warm-pulse confirmed'))
+    .catch(() => {});
+}, 9 * 60 * 1000); // Pulse every 9 minutes
