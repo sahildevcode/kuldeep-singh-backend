@@ -2153,6 +2153,30 @@ app.post('/api/students', async (req, res) => {
     if (!savedStudent) savedStudent = newStudent;
   }
 
+  // Auto-sync with UserModel so student's website login gets instant course & video access
+  try {
+    if (mongoose.connection.readyState === 1 && savedStudent && savedStudent.email && savedStudent.courseId) {
+      await UserModel.findOneAndUpdate(
+        { email: savedStudent.email.toLowerCase() },
+        { 
+          $addToSet: { enrolledCourseIds: savedStudent.courseId },
+          $setOnInsert: {
+            id: `usr_${Date.now()}`,
+            name: savedStudent.name,
+            email: savedStudent.email.toLowerCase(),
+            username: savedStudent.username || savedStudent.email.split('@')[0],
+            plainPassword: savedStudent.plainPassword || 'art123456',
+            role: 'student',
+            isEmailVerified: true
+          }
+        },
+        { upsert: true }
+      );
+      console.log(`[BACKEND] Linked course ${savedStudent.courseId} to User account ${savedStudent.email}`);
+    }
+  } catch (userSyncErr) {
+    console.error('Error linking user course access:', userSyncErr.message);
+  }
   broadcastUpdate('STUDENT_ENROLLED', savedStudent);
   console.log(`[BACKEND] Student Enrolled: ${savedStudent.name} (${savedStudent.courseTitle})`);
   res.status(201).json({ success: true, student: savedStudent });
