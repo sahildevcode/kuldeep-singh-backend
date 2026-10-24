@@ -1,4 +1,4 @@
-import 'dotenv/config';
+﻿import 'dotenv/config';
 import express from 'express';
 import cors from 'cors';
 import fs from 'fs';
@@ -1577,28 +1577,30 @@ const ALL_DUMMY_COURSE_IDS = ['course-oil-mastery', 'course-realistic-sketching'
 
 const DUMMY_COURSE_IDS = ALL_DUMMY_COURSE_IDS;
 
+let cachedCourses = null;
+let lastCoursesCacheTime = 0;
+
 app.get('/api/courses', async (req, res) => {
+  const now = Date.now();
+  if (Array.isArray(cachedCourses) && (now - lastCoursesCacheTime < 10000)) {
+    return res.json(cachedCourses);
+  }
   try {
     if (mongoose.connection.readyState === 2) {
       await mongoose.connection.asPromise().catch(() => {});
     }
     if (mongoose.connection.readyState === 1) {
-      // FIX: Do NOT delete inside GET endpoint — only filter out dummy IDs
       const courses = await CourseModel.find({ id: { $nin: ALL_DUMMY_COURSE_IDS } }).lean();
       if (Array.isArray(courses)) {
-        // FIX: Compute real studentsEnrolled count dynamically from students collection
-        const enriched = await Promise.all(courses.map(async (course) => {
-          try {
-            const realCount = await StudentModel.countDocuments({ courseId: course.id });
-            return { ...course, studentsEnrolled: realCount };
-          } catch { return course; }
-        }));
-        return res.json(enriched);
+        cachedCourses = courses;
+        lastCoursesCacheTime = now;
+        return res.json(courses);
       }
     }
   } catch (e) {
     console.error('Mongo courses get error:', e);
   }
+  if (Array.isArray(cachedCourses)) return res.json(cachedCourses);
   const courses = readJsonFile(COURSES_FILE, []);
   res.json(courses.filter((c) => !ALL_DUMMY_COURSE_IDS.includes(c.id)));
 });
