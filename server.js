@@ -180,12 +180,12 @@ function writeJsonFile(filePath, data) {
 async function syncMongoToJson(Model, jsonFilePath, sortOptions = { _id: -1 }) {
   try {
     if (mongoose.connection.readyState === 1) {
-      const projection = jsonFilePath.includes('artworks') ? { detailImages: 0 } : {};
+      const projection = {};
       const allDocs = await Model.find({}, projection).sort(sortOptions).lean();
       if (Array.isArray(allDocs) && allDocs.length > 0) {
         const cleaned = allDocs.map(d => {
           const { _id, __v, ...rest } = d;
-          return { ...rest, id: rest.id || String(_id), ...(jsonFilePath.includes('artworks') ? { detailImages: [] } : {}) };
+          return { ...rest, id: rest.id || String(_id), detailImages: Array.isArray(rest.detailImages) ? rest.detailImages : [] };
         });
         writeJsonFile(jsonFilePath, cleaned);
         if (jsonFilePath.includes('artworks') && typeof updateCachedArtworks === 'function') {
@@ -2308,11 +2308,11 @@ app.get('/api/artworks', async (req, res) => {
   }
   try {
     if (mongoose.connection.readyState === 1) {
-      const artworks = await ArtworkModel.find({}, { detailImages: 0 }).sort({ _id: -1 }).lean();
+      const artworks = await ArtworkModel.find({}).sort({ _id: -1 }).lean();
       if (Array.isArray(artworks) && artworks.length > 0) {
         cachedArtworks = artworks.map((d) => {
           const { _id, __v, ...rest } = d;
-          return { ...rest, id: rest.id || String(_id), detailImages: [] };
+          return { ...rest, id: rest.id || String(_id), detailImages: Array.isArray(rest.detailImages) ? rest.detailImages : [] };
         });
         writeJsonFile(ARTWORKS_FILE, cachedArtworks);
         return res.json(cachedArtworks);
