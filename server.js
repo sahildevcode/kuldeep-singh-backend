@@ -1582,13 +1582,11 @@ let lastCoursesCacheTime = 0;
 
 app.get('/api/courses', async (req, res) => {
   const now = Date.now();
-  if (Array.isArray(cachedCourses) && (now - lastCoursesCacheTime < 10000)) {
+  res.setHeader('Cache-Control', 'public, max-age=60, stale-while-revalidate=120');
+  if (Array.isArray(cachedCourses) && (now - lastCoursesCacheTime < 60000)) {
     return res.json(cachedCourses);
   }
   try {
-    if (mongoose.connection.readyState === 2) {
-      await mongoose.connection.asPromise().catch(() => {});
-    }
     if (mongoose.connection.readyState === 1) {
       const courses = await CourseModel.find({ id: { $nin: ALL_DUMMY_COURSE_IDS } }).lean();
       if (Array.isArray(courses)) {
@@ -1602,7 +1600,9 @@ app.get('/api/courses', async (req, res) => {
   }
   if (Array.isArray(cachedCourses)) return res.json(cachedCourses);
   const courses = readJsonFile(COURSES_FILE, []);
-  res.json(courses.filter((c) => !ALL_DUMMY_COURSE_IDS.includes(c.id)));
+  cachedCourses = courses.filter((c) => !ALL_DUMMY_COURSE_IDS.includes(c.id));
+  lastCoursesCacheTime = now;
+  res.json(cachedCourses);
 });
 
 app.get('/api/courses/:id', async (req, res) => {
@@ -2302,9 +2302,27 @@ app.get('/api/health', (req, res) => {
   });
 });
 
+// Helper to strip heavy detailImages from list view for ultra-fast mobile loading
+function getLightweightArtworks(list) {
+  if (!Array.isArray(list)) return [];
+  return list.map((a) => {
+    // Only return detailImagesCount instead of megabytes of base64
+    const { detailImages, ...rest } = a;
+    return {
+      ...rest,
+      detailImages: [],
+      detailImagesCount: Array.isArray(detailImages) ? detailImages.length : 0
+    };
+  });
+}
+
 app.get('/api/artworks', async (req, res) => {
+  // Check if client explicitly asks for full details (?full=true)
+  const isFullRequested = req.query.full === 'true';
+
   if (Array.isArray(cachedArtworks) && cachedArtworks.length > 0) {
-    return res.json(cachedArtworks);
+    res.setHeader('Cache-Control', 'public, max-age=60, stale-while-revalidate=120');
+    return res.json(isFullRequested ? cachedArtworks : getLightweightArtworks(cachedArtworks));
   }
   try {
     if (mongoose.connection.readyState === 1) {
@@ -2315,7 +2333,8 @@ app.get('/api/artworks', async (req, res) => {
           return { ...rest, id: rest.id || String(_id), detailImages: Array.isArray(rest.detailImages) ? rest.detailImages : [] };
         });
         writeJsonFile(ARTWORKS_FILE, cachedArtworks);
-        return res.json(cachedArtworks);
+        res.setHeader('Cache-Control', 'public, max-age=60, stale-while-revalidate=120');
+        return res.json(isFullRequested ? cachedArtworks : getLightweightArtworks(cachedArtworks));
       }
     }
   } catch (e) {
@@ -2323,16 +2342,27 @@ app.get('/api/artworks', async (req, res) => {
   }
   const artworks = readJsonFile(ARTWORKS_FILE, []);
   cachedArtworks = artworks;
-  res.json(artworks);
+  res.setHeader('Cache-Control', 'public, max-age=60, stale-while-revalidate=120');
+  res.json(isFullRequested ? artworks : getLightweightArtworks(artworks));
 });
 
 app.get('/api/artworks/:id', async (req, res) => {
-  const item = cachedArtworks.find((a) => a.id === req.params.id || String(a._id) === req.params.id);
-  if (item) return res.json(item);
+  const targetId = req.params.id;
+  // First check in-memory cache
+  const item = cachedArtworks.find((a) => a.id === targetId || String(a._id) === targetId);
+  if (item) {
+    res.setHeader('Cache-Control', 'public, max-age=120, stale-while-revalidate=300');
+    return res.json(item);
+  }
   try {
     if (mongoose.connection.readyState === 1) {
-      const mongoItem = await ArtworkModel.findOne({ id: req.params.id }).lean();
-      if (mongoItem) return res.json(mongoItem);
+      const conditions = [{ id: targetId }];
+      if (mongoose.isValidObjectId(targetId)) conditions.push({ _id: targetId });
+      const mongoItem = await ArtworkModel.findOne({ $or: conditions }).lean();
+      if (mongoItem) {
+        res.setHeader('Cache-Control', 'public, max-age=120, stale-while-revalidate=300');
+        return res.json(mongoItem);
+      }
     }
   } catch (e) {
     console.error('Mongo artwork get error:', e.message);
@@ -3152,9 +3182,9 @@ app.listen(PORT, '0.0.0.0', () => {
 
 // 24/7 Keep-Alive self-pulse (Keeps Render instance warm & responsive)
 setInterval(() => {
-  const pingUrl = `https://kuldeep-singh-backend-q1di.onrender.com/api/ping`;
+  const pingUrl = `https://kuldeep-singh-backend-nehy.onrender.com/api/ping`;
   fetch(pingUrl)
     .then((r) => r.json())
     .then(() => console.log('⚡ [24/7 KEEP-ALIVE] Render warm-pulse confirmed'))
     .catch(() => {});
-}, 9 * 60 * 1000); // Pulse every 9 minutes
+}, 5 * 60 * 1000); // Pulse every 5 minutes
