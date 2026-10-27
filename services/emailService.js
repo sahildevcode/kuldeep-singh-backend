@@ -35,7 +35,7 @@ export function hashOtp(otp, salt) {
  */
 export async function sendAdminOtpEmail({ toEmail, otp, adminName = 'Administrator' }) {
   const resend = getResendClient();
-  const fromAddress = process.env.RESEND_FROM_EMAIL || 'Kuldeep Studio <onboarding@resend.dev>';
+  const fromAddress = process.env.EMAIL_FROM || process.env.RESEND_FROM_EMAIL || 'Kuldeep Studio <onboarding@resend.dev>';
   const subject = `Your Admin Security Verification Code: ${otp}`;
 
   const html = `

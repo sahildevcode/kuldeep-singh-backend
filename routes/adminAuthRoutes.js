@@ -29,7 +29,7 @@ export function createAdminAuthRouter(UserModel, findUserByEmailOrUsername) {
   const router = express.Router();
 
   const getAuthorizedAdminEmails = () => {
-    const fromEnv = (process.env.ADMIN_EMAILS || 'admin@kuldeepsingh.art,kuldeep@art.com')
+    const fromEnv = (process.env.ADMIN_EMAILS || 'admin@kuldeepsingh.art,kuldeep@art.com,artistkuldeepsingh01@gmail.com')
       .split(',')
       .map(e => e.trim().toLowerCase())
       .filter(Boolean);
