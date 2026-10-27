@@ -97,11 +97,12 @@ export function createAdminAuthRouter(UserModel, findUserByEmailOrUsername) {
       if (!user) {
         console.log(`[ADMIN-BOOTSTRAP] First time provisioning authorized admin account for ${email}...`);
         const passwordHash = await hashPasswordArgon2('kuldeep2026');
+        const cleanUserPrefix = email.split('@')[0].replace(/[^a-zA-Z0-9]/g, '_');
         const newUser = new UserModel({
           id: `admin_${Date.now()}`,
           name: 'Kuldeep Singh',
           email,
-          username: 'kuldeep_admin',
+          username: `admin_${cleanUserPrefix}`,
           passwordHash,
           passwordSalt: 'argon2id',
           role: 'admin',
@@ -214,7 +215,7 @@ export function createAdminAuthRouter(UserModel, findUserByEmailOrUsername) {
       });
     } catch (err) {
       console.error('Admin login-challenge error:', err);
-      res.status(500).json({ success: false, error: 'Internal server error processing login challenge' });
+      res.status(500).json({ success: false, error: err.message || 'Internal server error processing login challenge' });
     }
   });
 
