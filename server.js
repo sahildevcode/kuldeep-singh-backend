@@ -1,6 +1,9 @@
 ﻿import 'dotenv/config';
 import express from 'express';
-import cors from 'cors';
+import cookieParser from 'cookie-parser';
+import { setupHelmet, setupCors, generalApiLimiter } from './middleware/security.js';
+import { requireAdminAuth, logAdminAudit } from './middleware/auth.js';
+import { createAdminAuthRouter } from './routes/adminAuthRoutes.js';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
@@ -22,7 +25,12 @@ const app = express();
 const PORT = process.env.PORT || 5000;
 const MONGODB_URI = process.env.MONGODB_URI || 'mongodb+srv://sahilytzxx_db_user:m4J2c1FkGupWeQVa@cluster0.xr4tur3.mongodb.net/kuldeep_studio?retryWrites=true&w=majority&appName=Cluster0';
 
-app.use(cors({ origin: '*' }));
+// Security Middleware: Helmet, CORS allowlist, Cookie Parser, Trust Proxy
+app.set('trust proxy', 1);
+app.use(setupHelmet());
+app.use(setupCors());
+app.use(cookieParser());
+app.use(generalApiLimiter);
 app.use(compression({
   threshold: 1024,
   filter: (req, res) => {
@@ -893,6 +901,8 @@ app.post('/api/auth/check-username', async (req, res) => {
 app.post('/api/auth/send-registration-otp', async (req, res) => {
   try {
     const { email, username, password, name, role = 'student' } = req.body;
+    // Security Enforcement: Disallow public administrator self-registration
+    const assignedRole = (role === 'admin') ? 'student' : role;
     const cleanEmail = (email || '').trim().toLowerCase();
     const cleanUsername = (username || '').trim().toLowerCase();
     const cleanPassword = (password || '').trim();
@@ -1078,6 +1088,8 @@ app.post('/api/auth/verify-registration-otp', async (req, res) => {
 app.post('/api/auth/register', async (req, res) => {
   try {
     const { email, username, password, name, role = 'student', deviceId } = req.body;
+    // Security Enforcement: Disallow public administrator self-registration
+    const assignedRole = (role === 'admin') ? 'student' : role;
     const cleanEmail = (email || '').trim().toLowerCase();
     const cleanUsername = (username || cleanEmail.split('@')[0]).trim().toLowerCase().replace(/[^a-z0-9_]/g, '_');
     const cleanPassword = (password || '').trim();
@@ -1172,6 +1184,9 @@ app.post('/api/auth/register', async (req, res) => {
 });
 
 // 2. LOGIN USER (Allows Email OR Unique Username + Strict Password Verification + Single Device Locking)
+// Mount Dedicated Administrator Authentication Router
+app.use('/api/admin', createAdminAuthRouter(UserModel, findUserByEmailOrUsername));
+
 app.post('/api/auth/login', async (req, res) => {
   try {
     const { email, username, loginIdentifier, password, deviceId } = req.body;
@@ -1476,7 +1491,7 @@ app.post('/api/session/logout', async (req, res) => {
 // ==========================================
 
 // Get All Registered Users
-app.get('/api/users', async (req, res) => {
+app.get('/api/users', requireAdminAuth, async (req, res) => {
   try {
     let users = [];
     if (mongoose.connection.readyState === 1) {
@@ -1523,6 +1538,15 @@ app.put('/api/users/:id', async (req, res) => {
   try {
     const targetId = req.params.id;
     const { name, email, username, password, plainPassword, role, enrolledCourseIds, isBlocked } = req.body;
+    
+    // Prevent non-admin users from escalating to admin or blocking accounts
+    if (role === 'admin' || typeof isBlocked === 'boolean') {
+      const authHeader = req.headers.authorization || '';
+      const cookieToken = req.cookies?.kuldeep_admin_token;
+      if (!authHeader && !cookieToken) {
+        return res.status(403).json({ success: false, error: 'Unauthorized role modification or administrative action.' });
+      }
+    }
     const updateData = {};
     if (name) updateData.name = name.trim();
     if (email) updateData.email = email.trim().toLowerCase();
@@ -1598,7 +1622,7 @@ app.put('/api/users/:id', async (req, res) => {
 });
 
 // Delete Registered User
-app.delete('/api/users/:id', async (req, res) => {
+app.delete('/api/users/:id', requireAdminAuth, async (req, res) => {
   try {
     const targetId = req.params.id;
     if (mongoose.connection.readyState === 1) {
@@ -1670,7 +1694,7 @@ app.get('/api/courses/:id', async (req, res) => {
 });
 
 // Add / Upload New Lecture into Course Module
-app.post('/api/courses/:id/modules/:moduleIndex/lectures', async (req, res) => {
+app.post('/api/courses/:id/modules/:moduleIndex/lectures', requireAdminAuth, async (req, res) => {
   const modIdx = parseInt(req.params.moduleIndex, 10);
   const newLecture = {
     id: req.body.id || `lec-${Date.now()}`,
@@ -1722,7 +1746,7 @@ app.post('/api/courses/:id/modules/:moduleIndex/lectures', async (req, res) => {
 });
 
 // Delete Lecture from Course Module
-app.delete('/api/courses/:id/modules/:moduleIndex/lectures/:lectureIndex', async (req, res) => {
+app.delete('/api/courses/:id/modules/:moduleIndex/lectures/:lectureIndex', requireAdminAuth, async (req, res) => {
   const modIdx = parseInt(req.params.moduleIndex, 10);
   const lecIdx = parseInt(req.params.lectureIndex, 10);
   const targetCourseId = req.params.id;
@@ -1786,7 +1810,7 @@ app.delete('/api/courses/:id/modules/:moduleIndex/lectures/:lectureIndex', async
 });
 
 // Create New Course / Live Batch
-app.post('/api/courses', async (req, res) => {
+app.post('/api/courses', requireAdminAuth, async (req, res) => {
   if (ALL_DUMMY_COURSE_IDS.includes(req.body?.id)) {
     return res.status(400).json({ error: 'This course has been permanently deleted' });
   }
@@ -1852,7 +1876,7 @@ app.post('/api/courses', async (req, res) => {
 });
 
 // Update Course
-app.put('/api/courses/:id', async (req, res) => {
+app.put('/api/courses/:id', requireAdminAuth, async (req, res) => {
   if (ALL_DUMMY_COURSE_IDS.includes(req.params.id)) {
     return res.status(400).json({ error: 'This course has been permanently deleted' });
   }
@@ -1912,7 +1936,7 @@ app.put('/api/courses/:id', async (req, res) => {
 });
 
 // Delete Course
-app.delete('/api/courses/:id', async (req, res) => {
+app.delete('/api/courses/:id', requireAdminAuth, async (req, res) => {
   const targetId = req.params.id;
   try {
     if (mongoose.connection.readyState === 1) {
@@ -1964,7 +1988,7 @@ app.get('/api/upcoming-courses', async (req, res) => {
   res.json({ success: true, count: upcoming.length, upcomingCourses: upcoming });
 });
 
-app.post('/api/upcoming-courses', async (req, res) => {
+app.post('/api/upcoming-courses', requireAdminAuth, async (req, res) => {
   const newCourse = req.body;
   if (!newCourse.id) {
     newCourse.id = 'up-course-' + Date.now();
@@ -1977,7 +2001,7 @@ app.post('/api/upcoming-courses', async (req, res) => {
   res.status(201).json({ success: true, upcomingCourse: newCourse });
 });
 
-app.put('/api/upcoming-courses/:id', async (req, res) => {
+app.put('/api/upcoming-courses/:id', requireAdminAuth, async (req, res) => {
   const targetId = req.params.id;
   const updates = req.body;
   const upcoming = readJsonFile(UPCOMING_COURSES_FILE, []);
@@ -1992,7 +2016,7 @@ app.put('/api/upcoming-courses/:id', async (req, res) => {
   }
 });
 
-app.delete('/api/upcoming-courses/:id', async (req, res) => {
+app.delete('/api/upcoming-courses/:id', requireAdminAuth, async (req, res) => {
   const targetId = req.params.id;
   const upcoming = readJsonFile(UPCOMING_COURSES_FILE, []);
   const filtered = upcoming.filter((c) => c.id !== targetId);
@@ -2021,7 +2045,7 @@ app.get('/api/testimonials', async (req, res) => {
   res.json({ success: true, count: testimonials.length, testimonials });
 });
 
-app.post('/api/testimonials', async (req, res) => {
+app.post('/api/testimonials', requireAdminAuth, async (req, res) => {
   const newTestimonial = { ...req.body };
   if (!newTestimonial.id) {
     newTestimonial.id = 'rev-' + Date.now();
@@ -2046,7 +2070,7 @@ app.post('/api/testimonials', async (req, res) => {
   res.status(201).json({ success: true, testimonial: newTestimonial });
 });
 
-app.put('/api/testimonials/:id', async (req, res) => {
+app.put('/api/testimonials/:id', requireAdminAuth, async (req, res) => {
   const targetId = req.params.id;
   const updates = { ...req.body, id: targetId };
   let updated;
@@ -2080,7 +2104,7 @@ app.put('/api/testimonials/:id', async (req, res) => {
   res.json({ success: true, testimonial: updated });
 });
 
-app.delete('/api/testimonials/:id', async (req, res) => {
+app.delete('/api/testimonials/:id', requireAdminAuth, async (req, res) => {
   const targetId = req.params.id;
   try {
     if (mongoose.connection.readyState === 1) {
@@ -2104,7 +2128,7 @@ app.delete('/api/testimonials/:id', async (req, res) => {
 // 3. STUDENTS & ENROLLMENTS API
 // ==========================================
 
-app.get('/api/students', async (req, res) => {
+app.get('/api/students', requireAdminAuth, async (req, res) => {
   try {
     let students = [];
     let users = [];
@@ -2147,7 +2171,7 @@ app.get('/api/students', async (req, res) => {
   }
 });
 
-app.post('/api/students', async (req, res) => {
+app.post('/api/students', requireAdminAuth, async (req, res) => {
   const newStudent = {
     id: req.body.id || `stu-${Date.now()}`,
     name: req.body.name || 'Student Artist',
@@ -2232,7 +2256,7 @@ app.post('/api/students', async (req, res) => {
   res.status(201).json({ success: true, student: savedStudent });
 });
 
-app.put('/api/students/:id', async (req, res) => {
+app.put('/api/students/:id', requireAdminAuth, async (req, res) => {
   const targetId = req.params.id;
   let updated;
   try {
@@ -2297,7 +2321,7 @@ app.put('/api/students/:id', async (req, res) => {
   res.json({ success: true, student: updated });
 });
 
-app.delete('/api/students/:id', async (req, res) => {
+app.delete('/api/students/:id', requireAdminAuth, async (req, res) => {
   const targetId = req.params.id;
   try {
     if (mongoose.connection.readyState === 1) {
@@ -2419,7 +2443,7 @@ app.get('/api/artworks/:id', async (req, res) => {
   res.status(404).json({ error: 'Artwork not found' });
 });
 
-app.post('/api/artworks', async (req, res) => {
+app.post('/api/artworks', requireAdminAuth, async (req, res) => {
   const body = req.body;
   const DUMMY_ART_IDS = ['art-01', 'art-02', 'art-03', 'art-04', 'art-05', 'art-06', 'art-07', 'art-08'];
   if (DUMMY_ART_IDS.includes(body.id)) {
@@ -2474,7 +2498,7 @@ app.post('/api/artworks', async (req, res) => {
 });
 
 // Reorder Artworks (Sequence Adjust)
-app.post('/api/artworks/reorder', async (req, res) => {
+app.post('/api/artworks/reorder', requireAdminAuth, async (req, res) => {
   const { artworkIds, mainArtworkId } = req.body;
   if (!Array.isArray(artworkIds)) {
     return res.status(400).json({ error: 'artworkIds array is required' });
@@ -2536,7 +2560,7 @@ app.post('/api/artworks/reorder', async (req, res) => {
   }
 });
 
-app.put('/api/artworks/:id', async (req, res) => {
+app.put('/api/artworks/:id', requireAdminAuth, async (req, res) => {
   const targetId = req.params.id;
   const idx = cachedArtworks.findIndex((a) => a.id === targetId || String(a._id) === targetId);
   if (idx !== -1) {
@@ -2556,7 +2580,7 @@ app.put('/api/artworks/:id', async (req, res) => {
   }
 });
 
-app.delete('/api/artworks/:id', async (req, res) => {
+app.delete('/api/artworks/:id', requireAdminAuth, async (req, res) => {
   const targetId = req.params.id;
   cachedArtworks = cachedArtworks.filter((a) => a.id !== targetId && String(a._id) !== targetId);
   writeJsonFile(ARTWORKS_FILE, cachedArtworks);
@@ -2577,7 +2601,7 @@ app.delete('/api/artworks/:id', async (req, res) => {
 // 5. ORDERS API
 // ==========================================
 
-app.get('/api/orders', async (req, res) => {
+app.get('/api/orders', requireAdminAuth, async (req, res) => {
   try {
     if (mongoose.connection.readyState === 1) {
       const orders = await OrderModel.find().sort({ createdAt: -1, _id: -1 }).lean();
@@ -2755,7 +2779,7 @@ app.post('/api/orders', async (req, res) => {
   res.status(201).json({ success: true, order: newOrder });
 });
 
-app.put('/api/orders/:id', async (req, res) => {
+app.put('/api/orders/:id', requireAdminAuth, async (req, res) => {
   let updated;
   try {
     if (mongoose.connection.readyState === 1) {
@@ -2782,7 +2806,7 @@ app.put('/api/orders/:id', async (req, res) => {
   res.json({ success: true, order: updated });
 });
 
-app.delete('/api/orders/:id', async (req, res) => {
+app.delete('/api/orders/:id', requireAdminAuth, async (req, res) => {
   const targetId = req.params.id;
   try {
     if (mongoose.connection.readyState === 1) {
@@ -2803,7 +2827,7 @@ app.delete('/api/orders/:id', async (req, res) => {
   res.json({ success: true, id: targetId });
 });
 
-app.delete('/api/orders', async (req, res) => {
+app.delete('/api/orders', requireAdminAuth, async (req, res) => {
   try {
     if (mongoose.connection.readyState === 1) {
       await OrderModel.deleteMany({});
@@ -2856,7 +2880,7 @@ app.get('/api/settings', async (req, res) => {
   res.json(settings);
 });
 
-app.put('/api/settings', async (req, res) => {
+app.put('/api/settings', requireAdminAuth, async (req, res) => {
   let updated;
   try {
     if (mongoose.connection.readyState === 1) {
@@ -2880,7 +2904,7 @@ app.put('/api/settings', async (req, res) => {
   res.json({ success: true, settings: updated });
 });
 
-app.put('/api/profile', async (req, res) => {
+app.put('/api/profile', requireAdminAuth, async (req, res) => {
   let updated;
   try {
     if (mongoose.connection.readyState === 1) {
@@ -3020,7 +3044,7 @@ const BUNNY_API_KEY = process.env.BUNNY_STREAM_API_KEY || 'c31e8e4b-c1e4-47fc-a0
 const BUNNY_CDN_HOST = process.env.BUNNY_CDN_HOST || 'vz-bb84e70d-4d1.b-cdn.net';
 
 // Direct Bunny Stream TUS Upload Auth Endpoint (Handles 2GB+ High Speed Browser Uploads Directly to Bunny.net)
-app.post('/api/upload/bunny-token', async (req, res) => {
+app.post('/api/upload/bunny-token', requireAdminAuth, async (req, res) => {
   try {
     const title = req.body.title || `Kuldeep Studio Video - ${Date.now()}`;
 
@@ -3075,7 +3099,7 @@ app.post('/api/upload/bunny-token', async (req, res) => {
   }
 });
 
-app.post('/api/upload/video', upload.single('video'), async (req, res) => {
+app.post('/api/upload/video', requireAdminAuth, upload.single('video'), async (req, res) => {
   try {
     if (!req.file) {
       return res.status(400).json({ error: 'No video file provided' });
@@ -3211,13 +3235,13 @@ async function deleteVideoFromBunny(videoIdOrUrl) {
 }
 
 // DELETE endpoint for Bunny Videos (by ID in URL or query)
-app.delete('/api/upload/bunny-video/:videoId', async (req, res) => {
+app.delete('/api/upload/bunny-video/:videoId', requireAdminAuth, async (req, res) => {
   const result = await deleteVideoFromBunny(req.params.videoId);
   res.json(result);
 });
 
 // POST endpoint for Bunny Video Deletion (accepts { videoId } or { videoUrl })
-app.post('/api/upload/bunny-delete', async (req, res) => {
+app.post('/api/upload/bunny-delete', requireAdminAuth, async (req, res) => {
   const target = req.body.videoId || req.body.videoUrl;
   if (!target) {
     return res.status(400).json({ error: 'videoId or videoUrl is required' });
@@ -3230,7 +3254,7 @@ app.post('/api/upload/bunny-delete', async (req, res) => {
 // 10. INQUIRIES & LEADS API
 // -------------------------------------------------------------
 
-app.get('/api/inquiries', async (req, res) => {
+app.get('/api/inquiries', requireAdminAuth, async (req, res) => {
   try {
     if (mongoose.connection.readyState === 1) {
       const inquiries = await InquiryModel.find().sort({ createdAt: -1 }).lean();
@@ -3281,7 +3305,7 @@ app.post('/api/inquiries', async (req, res) => {
   }
 });
 
-app.put('/api/inquiries/:id', async (req, res) => {
+app.put('/api/inquiries/:id', requireAdminAuth, async (req, res) => {
   try {
     let updated = null;
     if (mongoose.connection.readyState === 1) {
@@ -3308,7 +3332,7 @@ app.put('/api/inquiries/:id', async (req, res) => {
   }
 });
 
-app.delete('/api/inquiries/:id', async (req, res) => {
+app.delete('/api/inquiries/:id', requireAdminAuth, async (req, res) => {
   try {
     if (mongoose.connection.readyState === 1) {
       await InquiryModel.deleteOne({ id: req.params.id });
