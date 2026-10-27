@@ -45,6 +45,42 @@ const USERS_FILE = path.join(DATA_DIR, 'users.json');
 const INQUIRIES_FILE = path.join(DATA_DIR, 'inquiries.json');
 const UPCOMING_COURSES_FILE = path.join(DATA_DIR, 'upcoming_courses.json');
 const TESTIMONIALS_FILE = path.join(DATA_DIR, 'testimonials.json');
+const SETTINGS_FILE = path.join(DATA_DIR, 'site_settings.json');
+
+const DEFAULT_SITE_SETTINGS = {
+  id: 'global_settings',
+  fontHeading: 'Playfair Display',
+  fontBody: 'Plus Jakarta Sans',
+  fontAccent: 'Alex Brush',
+  primaryColor: '#E63946',
+  goldColor: '#C5A059',
+  brandNameFirst: 'KULDEEP',
+  brandNameSecond: 'SINGH',
+  siteTagline: 'Master Classical Realist & Atelier Founder',
+  heroPreTitle: 'The Art of',
+  heroMainTitle: 'Artist Kuldeep Singh',
+  heroButtonText: 'Discover The Artist',
+  statsYearsLabel: 'Years of Devoted Mastery',
+  statsYearsValue: '18',
+  statsArtworksLabel: 'Original Works Collected',
+  statsArtworksValue: '450+',
+  statsExhibitionsLabel: 'International Exhibitions',
+  statsExhibitionsValue: '24',
+  statsStudentsLabel: 'Global Academy Students',
+  statsStudentsValue: '5.2K+',
+  galleryHeading: 'Acquire Original Paintings & Limited Edition Prints.',
+  gallerySubheading: 'Explore authentic museum-grade masterworks hand-crafted with archival minerals, oils, and charcoals. Delivered worldwide with hand-embossed Certificates of Authenticity.',
+  aboutStoryHeading: 'A Life Dedicated to the Alchemy of Light, Oil & Form.',
+  philosophyQuote: 'Every stroke of oil on linen is a conversation between human patience and natural light.',
+  contactEmail: 'artistkuldeepsingh26@gmail.com',
+  contactPhone: '+91 88580 60101',
+  studioAddress: 'Delhi, India',
+  whatsappNumber: '918858060101',
+  instagramUrl: 'https://www.instagram.com/artist_kuldeep_singh/',
+  youtubeUrl: 'https://www.youtube.com/@artistkuldeepsingh',
+  enableParticles: true,
+  enableAudioAmbiance: true
+};
 
 if (!fs.existsSync(DATA_DIR)) {
   fs.mkdirSync(DATA_DIR, { recursive: true });
@@ -407,6 +443,12 @@ const TestimonialSchema = new mongoose.Schema({
 }, { timestamps: true, strict: false });
 
 const TestimonialModel = mongoose.model('Testimonial', TestimonialSchema);
+
+const SiteSettingsSchema = new mongoose.Schema({
+  id: { type: String, default: 'global_settings', unique: true }
+}, { timestamps: true, strict: false });
+
+const SiteSettingsModel = mongoose.model('SiteSettings', SiteSettingsSchema);
 
 let isMongoConnected = false;
 
@@ -2431,6 +2473,69 @@ app.post('/api/artworks', async (req, res) => {
   }
 });
 
+// Reorder Artworks (Sequence Adjust)
+app.post('/api/artworks/reorder', async (req, res) => {
+  const { artworkIds, mainArtworkId } = req.body;
+  if (!Array.isArray(artworkIds)) {
+    return res.status(400).json({ error: 'artworkIds array is required' });
+  }
+
+  // Create a quick lookup map of existing artworks
+  const map = new Map();
+  for (const art of cachedArtworks) {
+    map.set(art.id, art);
+    if (art._id) map.set(String(art._id), art);
+  }
+
+  const reordered = [];
+  artworkIds.forEach((id, idx) => {
+    const existing = map.get(id);
+    if (existing) {
+      existing.order = idx + 1;
+      if (mainArtworkId !== undefined) {
+        existing.isMain = (existing.id === mainArtworkId || String(existing._id) === mainArtworkId);
+      }
+      reordered.push(existing);
+      map.delete(id);
+      if (existing._id) map.delete(String(existing._id));
+    }
+  });
+
+  // Append any artworks not mentioned in the reorder payload
+  for (const remaining of map.values()) {
+    if (!reordered.some(a => a.id === remaining.id)) {
+      remaining.order = (remaining.order || 999);
+      if (mainArtworkId !== undefined) {
+        remaining.isMain = (remaining.id === mainArtworkId || String(remaining._id) === mainArtworkId);
+      }
+      reordered.push(remaining);
+    }
+  }
+
+  cachedArtworks = reordered;
+  writeJsonFile(ARTWORKS_FILE, cachedArtworks);
+  broadcastUpdate('ARTWORKS_REORDERED', { artworks: cachedArtworks, mainArtworkId });
+  console.log('[BACKEND] Artworks Reordered successfully (' + reordered.length + ' artworks). Main: ' + (mainArtworkId || 'none'));
+  res.json({ success: true, artworks: cachedArtworks });
+
+  // Async bulk persist to MongoDB
+  if (mongoose.connection.readyState === 1) {
+    try {
+      const bulkOps = reordered.map((art, idx) => ({
+        updateOne: {
+          filter: { id: art.id },
+          update: { $set: { order: idx + 1, isMain: Boolean(art.isMain) } }
+        }
+      }));
+      if (bulkOps.length > 0) {
+        ArtworkModel.bulkWrite(bulkOps).catch(e => console.error('Mongo bulkWrite reorder error:', e.message));
+      }
+    } catch (err) {
+      console.error('Mongo reorder bulk error:', err);
+    }
+  }
+});
+
 app.put('/api/artworks/:id', async (req, res) => {
   const targetId = req.params.id;
   const idx = cachedArtworks.findIndex((a) => a.id === targetId || String(a._id) === targetId);
@@ -2730,6 +2835,49 @@ app.get('/api/profile', async (req, res) => {
   }
   const profile = readJsonFile(PROFILE_FILE, INITIAL_ARTIST_PROFILE);
   res.json(profile);
+});
+
+// ==========================================
+// SITE SETTINGS (100% Control: Fonts, Headings, Texts, Colors, Branding)
+// ==========================================
+app.get('/api/settings', async (req, res) => {
+  try {
+    if (mongoose.connection.readyState === 1) {
+      let settings = await SiteSettingsModel.findOne({ id: 'global_settings' }).lean();
+      if (!settings) {
+        settings = await SiteSettingsModel.create(DEFAULT_SITE_SETTINGS);
+      }
+      return res.json(settings);
+    }
+  } catch (e) {
+    console.error('Mongo settings get error:', e);
+  }
+  const settings = readJsonFile(SETTINGS_FILE, DEFAULT_SITE_SETTINGS);
+  res.json(settings);
+});
+
+app.put('/api/settings', async (req, res) => {
+  let updated;
+  try {
+    if (mongoose.connection.readyState === 1) {
+      updated = await SiteSettingsModel.findOneAndUpdate(
+        { id: 'global_settings' },
+        { ...req.body, id: 'global_settings' },
+        { upsert: true, new: true }
+      ).lean();
+    }
+  } catch (e) {
+    console.error('Mongo settings update error:', e);
+  }
+
+  const current = readJsonFile(SETTINGS_FILE, DEFAULT_SITE_SETTINGS);
+  const merged = { ...current, ...req.body, id: 'global_settings' };
+  writeJsonFile(SETTINGS_FILE, merged);
+  if (!updated) updated = merged;
+
+  broadcastUpdate('SETTINGS_UPDATED', updated);
+  console.log('[BACKEND] Global Site Settings & Typography Updated');
+  res.json({ success: true, settings: updated });
 });
 
 app.put('/api/profile', async (req, res) => {
