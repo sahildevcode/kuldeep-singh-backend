@@ -3350,21 +3350,18 @@ app.delete('/api/inquiries/:id', requireAdminAuth, async (req, res) => {
 // START SERVER
 // -------------------------------------------------------------
 
-if (process.env.NODE_ENV !== 'production' || !process.env.VERCEL) {
+if (!process.env.VERCEL) {
   app.listen(PORT, '0.0.0.0', () => {
-    console.log('Server running on port ' + PORT);
+    console.log(`====================================================`);
+    console.log(`🎨 Artist Kuldeep Singh 24/7 Complete Cloud API Online!`);
+    console.log(`🚀 Port: http://localhost:${PORT}`);
+    console.log(`☁️ Database: MongoDB Atlas (Cluster0)`);
+    console.log(`💳 Razorpay Gateway: ${process.env.RAZORPAY_KEY_ID ? 'Configured' : 'Demo Simulator Active'}`);
+    console.log(`====================================================`);
   });
 }
 
 export default app;
-// old: app.listen(
-  console.log(`====================================================`);
-  console.log(`🎨 Artist Kuldeep Singh 24/7 Complete Cloud API Online!`);
-  console.log(`🚀 Port: http://localhost:${PORT}`);
-  console.log(`☁️ Database: MongoDB Atlas (Cluster0)`);
-  console.log(`💳 Razorpay Gateway: ${process.env.RAZORPAY_KEY_ID ? 'Configured' : 'Demo Simulator Active'}`);
-  console.log(`====================================================`);
-});
 
 // 24/7 Keep-Alive self-pulse (Keeps Render instance warm & responsive)
 setInterval(() => {
