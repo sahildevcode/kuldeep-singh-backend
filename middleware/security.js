@@ -19,6 +19,7 @@ export function setupCors() {
   const defaultAllowedOrigins = [
     'https://artistkuldeepsingh.com',
     'https://www.artistkuldeepsingh.com',
+    'https://artistadmin.artistkuldeepsingh.com',
     'https://artist-kuldeep-singh.vercel.app',
     'https://kuldeep-singh-admin.vercel.app',
     'http://localhost:5173',
