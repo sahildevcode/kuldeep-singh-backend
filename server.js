@@ -16,7 +16,7 @@ import nodemailer from 'nodemailer';
 import compression from 'compression';
 
 // Force public DNS resolution to prevent local ISP SRV resolution issues
-dns.setServers(['8.8.8.8', '1.1.1.1']);
+try { dns.setServers(['8.8.8.8', '1.1.1.1']); } catch (e) {}
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
