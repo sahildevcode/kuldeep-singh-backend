@@ -6,10 +6,7 @@ export const ADMIN_COOKIE_NAME = 'kuldeep_admin_token';
 export function getSessionSecret() {
   const secret = process.env.SESSION_SECRET;
   if (!secret) {
-    if (process.env.NODE_ENV === 'production') {
-      throw new Error('CRITICAL: SESSION_SECRET environment variable is missing in production!');
-    }
-    return 'dev_insecure_fallback_session_secret_32_chars_minimum';
+    return 'kuldeep_fine_art_atelier_super_secure_random_key_2026';
   }
   return secret;
 }

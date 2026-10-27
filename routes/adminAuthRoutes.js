@@ -345,7 +345,7 @@ export function createAdminAuthRouter(UserModel, findUserByEmailOrUsername) {
       });
     } catch (err) {
       console.error('Admin verify-otp error:', err);
-      res.status(500).json({ success: false, error: 'Internal server error verifying OTP' });
+      res.status(500).json({ success: false, error: err.message || 'Internal server error verifying OTP' });
     }
   });
 
