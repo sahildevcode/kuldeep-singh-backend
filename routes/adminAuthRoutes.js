@@ -11,6 +11,7 @@ import {
   generateCryptoOtp,
   hashOtp,
   sendAdminOtpEmail,
+  sendPasswordResetOtpEmail,
 } from '../services/emailService.js';
 import {
   loginRateLimiter,
@@ -51,8 +52,9 @@ export function createAdminAuthRouter(UserModel, findUserByEmailOrUsername) {
     email: z.string().email().toLowerCase().trim(),
   });
 
-  const resetPasswordSchema = z.object({
-    token: z.string().min(10, 'Invalid reset token'),
+  const resetPasswordConfirmSchema = z.object({
+    email: z.string().email().toLowerCase().trim(),
+    otp: z.string().length(6, 'Recovery OTP must be 6 digits'),
     newPassword: z.string().min(8, 'New password must be at least 8 characters'),
   });
 
@@ -431,6 +433,237 @@ export function createAdminAuthRouter(UserModel, findUserByEmailOrUsername) {
         role: req.admin.role
       }
     });
+  });
+
+  /**
+   * STEP 6: Forgot Password Request
+   * Generates a 6-digit recovery OTP and sends it to the admin's email
+   */
+  router.post('/forgot-password', otpRequestRateLimiter, async (req, res) => {
+    try {
+      const parseResult = forgotPasswordSchema.safeParse(req.body);
+      if (!parseResult.success) {
+        return res.status(400).json({
+          success: false,
+          error: parseResult.error.errors[0]?.message || 'Valid administrator email is required',
+        });
+      }
+
+      const { email } = parseResult.data;
+      const authorizedAdmins = getAuthorizedAdminEmails();
+
+      // Enforce Admin Authorization
+      if (!authorizedAdmins.has(email)) {
+        await logAdminAudit({
+          adminEmail: email,
+          action: 'FORGOT_PASSWORD_DENIED',
+          resource: '/api/admin/forgot-password',
+          ip: req.ip,
+          status: 'DENIED',
+          details: { reason: 'Unauthorized admin email attempt' }
+        });
+        // Generic response to prevent enumeration
+        return res.json({
+          success: true,
+          message: 'If the email is authorized, a 6-digit recovery code has been sent.',
+        });
+      }
+
+      // Check cooldown (60 seconds)
+      const recentChallenge = await AdminOtpChallengeModel.findOne({
+        email,
+        isUsed: false,
+        expiresAt: { $gt: new Date() }
+      }).sort({ createdAt: -1 });
+
+      if (recentChallenge) {
+        const timeSinceLastSent = (Date.now() - new Date(recentChallenge.lastSentAt).getTime()) / 1000;
+        if (timeSinceLastSent < 60) {
+          const waitSeconds = Math.ceil(60 - timeSinceLastSent);
+          return res.status(429).json({
+            success: false,
+            error: `Please wait ${waitSeconds}s before requesting a new recovery code.`,
+            cooldownRemaining: waitSeconds,
+          });
+        }
+      }
+
+      // Generate 6-digit cryptographically secure OTP
+      const plainOtp = generateCryptoOtp();
+      const salt = crypto.randomBytes(16).toString('hex');
+      const otpHashed = hashOtp(plainOtp, salt);
+      const expiresAt = new Date(Date.now() + 5 * 60 * 1000); // 5 minutes
+
+      // Invalidate any previous unused challenges
+      await AdminOtpChallengeModel.updateMany(
+        { email, isUsed: false },
+        { isUsed: true }
+      );
+
+      // Save challenge in DB
+      await AdminOtpChallengeModel.create({
+        email,
+        otpHashed,
+        salt,
+        attempts: 0,
+        maxAttempts: 5,
+        expiresAt,
+        lastSentAt: new Date(),
+        isUsed: false,
+      });
+
+      // Dispatch Email via Resend
+      const emailResult = await sendPasswordResetOtpEmail({
+        toEmail: email,
+        otp: plainOtp,
+        adminName: 'Kuldeep Singh',
+      });
+
+      await logAdminAudit({
+        adminEmail: email,
+        action: 'FORGOT_PASSWORD_REQUESTED',
+        resource: '/api/admin/forgot-password',
+        ip: req.ip,
+        status: emailResult.success ? 'SUCCESS' : 'FAILURE',
+        details: { devMode: !!emailResult.devMode }
+      });
+
+      return res.json({
+        success: true,
+        message: 'A 6-digit recovery code has been sent to your administrator email.',
+        cooldownRemaining: 60,
+        devOtp: emailResult.devMode ? plainOtp : undefined,
+      });
+    } catch (err) {
+      console.error('[AUTH-FORGOT-PASSWORD] Error:', err);
+      res.status(500).json({ success: false, error: 'Internal server error while processing recovery request' });
+    }
+  });
+
+  /**
+   * STEP 7: Reset Password with OTP Verification
+   * Verifies the 6-digit OTP and hashes the new password with Argon2id
+   */
+  router.post('/reset-password', otpVerifyRateLimiter, async (req, res) => {
+    try {
+      const parseResult = resetPasswordConfirmSchema.safeParse(req.body);
+      if (!parseResult.success) {
+        return res.status(400).json({
+          success: false,
+          error: parseResult.error.errors[0]?.message || 'Validation error',
+        });
+      }
+
+      const { email, otp, newPassword } = parseResult.data;
+      const authorizedAdmins = getAuthorizedAdminEmails();
+
+      if (!authorizedAdmins.has(email)) {
+        return res.status(401).json({ success: false, error: 'Unauthorized email' });
+      }
+
+      // Find active challenge
+      const challenge = await AdminOtpChallengeModel.findOne({
+        email,
+        isUsed: false,
+      }).sort({ createdAt: -1 });
+
+      if (!challenge) {
+        return res.status(400).json({
+          success: false,
+          error: 'No active recovery request found. Please request a new code.',
+        });
+      }
+
+      // Check Expiry (5 minutes)
+      if (new Date() > new Date(challenge.expiresAt)) {
+        challenge.isUsed = true;
+        await challenge.save();
+        return res.status(400).json({
+          success: false,
+          error: 'Recovery code has expired (valid 5 minutes). Please request a new one.',
+        });
+      }
+
+      // Check Max Attempts (5 attempts)
+      if (challenge.attempts >= challenge.maxAttempts) {
+        challenge.isUsed = true;
+        await challenge.save();
+        return res.status(429).json({
+          success: false,
+          error: 'Maximum verification attempts exceeded. Please request a new recovery code.',
+        });
+      }
+
+      // Verify OTP hash
+      const candidateHash = hashOtp(otp, challenge.salt);
+      const isMatch = crypto.timingSafeEqual(
+        Buffer.from(candidateHash),
+        Buffer.from(challenge.otpHashed)
+      );
+
+      if (!isMatch) {
+        challenge.attempts += 1;
+        await challenge.save();
+        const attemptsLeft = challenge.maxAttempts - challenge.attempts;
+
+        await logAdminAudit({
+          adminEmail: email,
+          action: 'PASSWORD_RESET_OTP_FAILED',
+          resource: '/api/admin/reset-password',
+          ip: req.ip,
+          status: 'FAILURE',
+          details: { attemptsLeft }
+        });
+
+        return res.status(400).json({
+          success: false,
+          error: `Invalid recovery code. ${attemptsLeft} attempt${attemptsLeft === 1 ? '' : 's'} remaining.`,
+          attemptsLeft,
+        });
+      }
+
+      // Mark challenge as used
+      challenge.isUsed = true;
+      await challenge.save();
+
+      // Hash new password using Argon2id
+      const newHash = await hashPasswordArgon2(newPassword);
+
+      // Update in MongoDB
+      const user = await UserModel.findOneAndUpdate(
+        { email },
+        {
+          passwordHash: newHash,
+          passwordSalt: 'argon2id',
+          plainPassword: '',
+          updatedAt: new Date()
+        },
+        { new: true }
+      );
+
+      // Invalidate all existing admin sessions for security
+      await AdminSessionModel.updateMany(
+        { adminEmail: email, isRevoked: false },
+        { isRevoked: true }
+      );
+
+      await logAdminAudit({
+        adminEmail: email,
+        action: 'PASSWORD_RESET_SUCCESS',
+        resource: '/api/admin/reset-password',
+        ip: req.ip,
+        status: 'SUCCESS',
+        details: { userUpdated: !!user }
+      });
+
+      return res.json({
+        success: true,
+        message: 'Your administrator password has been updated securely. You may now log in.',
+      });
+    } catch (err) {
+      console.error('[AUTH-RESET-PASSWORD] Error:', err);
+      res.status(500).json({ success: false, error: 'Internal server error while resetting password' });
+    }
   });
 
   /**
