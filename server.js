@@ -3350,7 +3350,14 @@ app.delete('/api/inquiries/:id', requireAdminAuth, async (req, res) => {
 // START SERVER
 // -------------------------------------------------------------
 
-app.listen(PORT, '0.0.0.0', () => {
+if (process.env.NODE_ENV !== 'production' || !process.env.VERCEL) {
+  app.listen(PORT, '0.0.0.0', () => {
+    console.log('Server running on port ' + PORT);
+  });
+}
+
+export default app;
+// old: app.listen(
   console.log(`====================================================`);
   console.log(`🎨 Artist Kuldeep Singh 24/7 Complete Cloud API Online!`);
   console.log(`🚀 Port: http://localhost:${PORT}`);
