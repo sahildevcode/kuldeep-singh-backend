@@ -459,8 +459,17 @@ const SiteSettingsSchema = new mongoose.Schema({
 const SiteSettingsModel = mongoose.model('SiteSettings', SiteSettingsSchema);
 
 let isMongoConnected = false;
+let mongoConnectingPromise = null;
 
 async function initMongoDB() {
+  if (mongoose.connection.readyState === 1) {
+    isMongoConnected = true;
+    return mongoose.connection;
+  }
+  if (mongoConnectingPromise) {
+    return mongoConnectingPromise;
+  }
+  mongoConnectingPromise = (async () => {
   try {
     console.log('[BACKEND] Connecting to MongoDB Atlas...');
     await mongoose.connect(MONGODB_URI, { serverSelectionTimeoutMS: 10000 });
@@ -577,10 +586,24 @@ async function initMongoDB() {
     isMongoConnected = false;
     console.warn('⚠️ [BACKEND] MongoDB Atlas connection warning:', err.message);
     console.warn('⚠️ [BACKEND] Server is running in resilient local JSON mode.');
+  } finally {
+    mongoConnectingPromise = null;
   }
+  })();
+  return mongoConnectingPromise;
 }
 
 initMongoDB();
+
+// Ensure MongoDB connection before every request (critical for serverless)
+app.use(async (req, res, next) => {
+  if (mongoose.connection.readyState !== 1) {
+    try {
+      await initMongoDB();
+    } catch (e) {}
+  }
+  next();
+});
 
 // SSE Clients for Live Push Notifications
 let sseClients = [];
