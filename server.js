@@ -3432,12 +3432,3 @@ if (!process.env.VERCEL) {
 }
 
 export default app;
-
-// 24/7 Keep-Alive self-pulse (Keeps Render instance warm & responsive)
-setInterval(() => {
-  const pingUrl = `https://kuldeep-singh-backend-nehy.onrender.com/api/ping`;
-  fetch(pingUrl)
-    .then((r) => r.json())
-    .then(() => console.log('⚡ [24/7 KEEP-ALIVE] Render warm-pulse confirmed'))
-    .catch(() => {});
-}, 5 * 60 * 1000); // Pulse every 5 minutes
