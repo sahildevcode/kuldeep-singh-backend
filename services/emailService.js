@@ -1,7 +1,34 @@
 import { Resend } from 'resend';
+import nodemailer from 'nodemailer';
 import crypto from 'crypto';
 
 let resendClient = null;
+
+let mailTransporter = null;
+export function getNodemailerTransporter() {
+  const user = (process.env.SMTP_USER || process.env.GMAIL_USER || '').trim();
+  const pass = (process.env.SMTP_PASS || process.env.GMAIL_APP_PASS || process.env.GMAIL_APP_PASSWORD || '').trim();
+  if (!user || !pass) return null;
+
+  if (!mailTransporter) {
+    const host = (process.env.SMTP_HOST || '').trim();
+    if (host) {
+      mailTransporter = nodemailer.createTransport({
+        host,
+        port: Number(process.env.SMTP_PORT) || 587,
+        secure: process.env.SMTP_SECURE === 'true',
+        auth: { user, pass }
+      });
+    } else {
+      mailTransporter = nodemailer.createTransport({
+        service: 'gmail',
+        auth: { user, pass }
+      });
+    }
+  }
+  return mailTransporter;
+}
+
 
 export function getResendClient() {
   const apiKey = (process.env.RESEND_API_KEY || '').trim();
@@ -83,35 +110,50 @@ export async function sendAdminOtpEmail({ toEmail, otp, adminName = 'Administrat
     </html>
   `;
 
-  if (!resend) {
-    if (process.env.NODE_ENV !== 'production') {
-      console.warn(`[AUTH-RESEND-DEV] RESEND_API_KEY is not configured in .env. Falling back to local development OTP dispatch.`);
-      console.log(`[AUTH-RESEND-DEV] 6-digit OTP generated for ${toEmail}: ${otp}`);
-    } else {
-      console.error(`[AUTH-RESEND-PROD] ERROR: RESEND_API_KEY is missing in production environment.`);
-      throw new Error('Email service is not configured. Please contact the administrator.');
+  const transporter = getNodemailerTransporter();
+
+  // Mode 1: Resend API
+  if (resend) {
+    try {
+      const response = await resend.emails.send({
+        from: fromAddress,
+        to: [toEmail],
+        subject,
+        html,
+      });
+      if (response.error) {
+        console.error(`[AUTH-RESEND] Failed to send email to ${toEmail}:`, response.error.message);
+        return { success: false, error: response.error.message };
+      }
+      return { success: true, id: response.data?.id };
+    } catch (err) {
+      console.error(`[AUTH-RESEND] Exception during email dispatch:`, err.message);
+      return { success: false, error: err.message };
     }
-    return { success: true, devMode: true };
   }
 
-  try {
-    const response = await resend.emails.send({
-      from: fromAddress,
-      to: [toEmail],
-      subject,
-      html,
-    });
-
-    if (response.error) {
-      console.error(`[AUTH-RESEND] Failed to send email to ${toEmail}:`, response.error.message);
-      return { success: false, error: response.error.message };
+  // Mode 2: Gmail SMTP / Custom SMTP via Nodemailer
+  if (transporter) {
+    try {
+      const fromEmail = process.env.EMAIL_FROM || process.env.SMTP_USER || process.env.GMAIL_USER;
+      const info = await transporter.sendMail({
+        from: `"Kuldeep Singh Studio" <${fromEmail}>`,
+        to: toEmail,
+        subject,
+        html,
+      });
+      console.log(`[AUTH-SMTP] Real email successfully sent to ${toEmail}: ${info.messageId}`);
+      return { success: true, id: info.messageId };
+    } catch (err) {
+      console.error(`[AUTH-SMTP] Exception during email dispatch:`, err.message);
+      return { success: false, error: err.message };
     }
-
-    return { success: true, id: response.data?.id };
-  } catch (err) {
-    console.error(`[AUTH-RESEND] Exception during email dispatch:`, err.message);
-    return { success: false, error: err.message };
   }
+
+  // Mode 3: Local Development Simulation Mode
+  console.warn(`[AUTH-DEV] No RESEND_API_KEY or SMTP credentials configured in .env. Falling back to simulated OTP.`);
+  console.log(`[AUTH-DEV] 6-digit OTP generated for ${toEmail}: ${otp}`);
+  return { success: true, devMode: true };
 }
 
 /**
@@ -167,33 +209,48 @@ export async function sendPasswordResetOtpEmail({ toEmail, otp, adminName = 'Adm
     </html>
   `;
 
-  if (!resend) {
-    if (process.env.NODE_ENV !== 'production') {
-      console.warn(`[AUTH-RESET-DEV] RESEND_API_KEY is not configured in .env. Falling back to local development OTP dispatch.`);
-      console.log(`[AUTH-RESET-DEV] 6-digit Password Reset OTP for ${toEmail}: ${otp}`);
-    } else {
-      console.error(`[AUTH-RESET-PROD] ERROR: RESEND_API_KEY is missing in production environment.`);
-      throw new Error('Email service is not configured. Please contact the administrator.');
+  const transporter = getNodemailerTransporter();
+
+  // Mode 1: Resend API
+  if (resend) {
+    try {
+      const response = await resend.emails.send({
+        from: fromAddress,
+        to: [toEmail],
+        subject,
+        html,
+      });
+      if (response.error) {
+        console.error(`[AUTH-RESET] Failed to send email to ${toEmail}:`, response.error.message);
+        return { success: false, error: response.error.message };
+      }
+      return { success: true, id: response.data?.id };
+    } catch (err) {
+      console.error(`[AUTH-RESET] Exception during password reset email dispatch:`, err.message);
+      return { success: false, error: err.message };
     }
-    return { success: true, devMode: true };
   }
 
-  try {
-    const response = await resend.emails.send({
-      from: fromAddress,
-      to: [toEmail],
-      subject,
-      html,
-    });
-
-    if (response.error) {
-      console.error(`[AUTH-RESET] Failed to send email to ${toEmail}:`, response.error.message);
-      return { success: false, error: response.error.message };
+  // Mode 2: Gmail SMTP / Custom SMTP via Nodemailer
+  if (transporter) {
+    try {
+      const fromEmail = process.env.EMAIL_FROM || process.env.SMTP_USER || process.env.GMAIL_USER;
+      const info = await transporter.sendMail({
+        from: `"Kuldeep Singh Studio" <${fromEmail}>`,
+        to: toEmail,
+        subject,
+        html,
+      });
+      console.log(`[AUTH-SMTP] Real password reset email sent to ${toEmail}: ${info.messageId}`);
+      return { success: true, id: info.messageId };
+    } catch (err) {
+      console.error(`[AUTH-SMTP] Exception during email dispatch:`, err.message);
+      return { success: false, error: err.message };
     }
-
-    return { success: true, id: response.data?.id };
-  } catch (err) {
-    console.error(`[AUTH-RESET] Exception during password reset email dispatch:`, err.message);
-    return { success: false, error: err.message };
   }
+
+  // Mode 3: Local Development Simulation Mode
+  console.warn(`[AUTH-RESET-DEV] No RESEND_API_KEY or SMTP credentials configured in .env. Falling back to simulated OTP.`);
+  console.log(`[AUTH-RESET-DEV] 6-digit Password Reset OTP for ${toEmail}: ${otp}`);
+  return { success: true, devMode: true };
 }

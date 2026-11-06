@@ -20,12 +20,19 @@ export function setupCors() {
     'https://artistkuldeepsingh.com',
     'https://www.artistkuldeepsingh.com',
     'https://artistadmin.artistkuldeepsingh.com',
+    'https://admin.artistkuldeepsingh.com',
+    'http://admin.artistkuldeepsingh.com',
     'https://artist-kuldeep-singh.vercel.app',
     'https://kuldeep-singh-admin.vercel.app',
     'http://localhost:5173',
     'http://localhost:5174',
+    'http://localhost:5175',
+    'http://127.0.0.1:5173',
+    'http://127.0.0.1:5174',
+    'http://127.0.0.1:5175',
     'http://localhost:3000',
-    'http://localhost:5000'
+    'http://localhost:5000',
+    'http://127.0.0.1:5000'
   ];
 
   const allowedOriginsSet = new Set([...defaultAllowedOrigins, ...envOrigins]);
@@ -39,13 +46,19 @@ export function setupCors() {
         return callback(null, true);
       }
 
-      // Check specific trusted preview subdomains if needed (e.g. *.vercel.app for kuldeep-singh-admin)
-      if (/^https:\/\/kuldeep-singh-admin.*\.vercel\.app$/.test(origin) ||
+      // Allow any local loopback host/port during development (localhost or 127.0.0.1 on any port)
+      if (/^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin)) {
+        return callback(null, true);
+      }
+
+      // Allow any subdomain of artistkuldeepsingh.com or trusted preview deployments
+      if (/^https?:\/\/([a-zA-Z0-9-]+\.)*artistkuldeepsingh\.com$/.test(origin) ||
+          /^https:\/\/kuldeep-singh-admin.*\.vercel\.app$/.test(origin) ||
           /^https:\/\/artist-kuldeep-singh.*\.vercel\.app$/.test(origin)) {
         return callback(null, true);
       }
 
-      callback(new Error(`Origin ${origin} not permitted by CORS policy`));
+      callback(null, false);
     },
     credentials: true,
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
