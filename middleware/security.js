@@ -24,6 +24,7 @@ export function setupCors() {
     'http://admin.artistkuldeepsingh.com',
     'https://artist-kuldeep-singh.vercel.app',
     'https://kuldeep-singh-admin.vercel.app',
+    'https://sahildevcode.github.io',
     'http://localhost:5173',
     'http://localhost:5174',
     'http://localhost:5175',

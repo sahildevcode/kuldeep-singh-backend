@@ -1,4 +1,4 @@
-﻿import 'dotenv/config';
+import 'dotenv/config';
 import express from 'express';
 import cookieParser from 'cookie-parser';
 import { setupHelmet, setupCors, generalApiLimiter } from './middleware/security.js';
@@ -80,7 +80,7 @@ const DEFAULT_SITE_SETTINGS = {
   gallerySubheading: 'Explore authentic museum-grade masterworks hand-crafted with archival minerals, oils, and charcoals. Delivered worldwide with hand-embossed Certificates of Authenticity.',
   aboutStoryHeading: 'A Life Dedicated to the Alchemy of Light, Oil & Form.',
   philosophyQuote: 'Every stroke of oil on linen is a conversation between human patience and natural light.',
-  contactEmail: 'artistkuldeepsingh26@gmail.com',
+  contactEmail: 'artistkuldeepsingh01@gmail.com',
   contactPhone: '+91 88580 60101',
   studioAddress: 'Delhi, India',
   whatsappNumber: '918858060101',
@@ -2406,7 +2406,7 @@ function getLightweightArtworks(list) {
     const { detailImages, ...rest } = a;
     return {
       ...rest,
-      detailImages: [],
+      detailImages: Array.isArray(a.detailImages) ? a.detailImages : (Array.isArray(detailImages) ? detailImages : []),
       detailImagesCount: Array.isArray(detailImages) ? detailImages.length : 0
     };
   });
@@ -2418,7 +2418,7 @@ app.get('/api/artworks', async (req, res) => {
 
   if (Array.isArray(cachedArtworks) && cachedArtworks.length > 0) {
     res.setHeader('Cache-Control', 'public, max-age=60, stale-while-revalidate=120');
-    return res.json(isFullRequested ? cachedArtworks : getLightweightArtworks(cachedArtworks));
+    return res.json(cachedArtworks);
   }
   try {
     if (mongoose.connection.readyState === 1) {
@@ -2430,7 +2430,7 @@ app.get('/api/artworks', async (req, res) => {
         });
         writeJsonFile(ARTWORKS_FILE, cachedArtworks);
         res.setHeader('Cache-Control', 'public, max-age=60, stale-while-revalidate=120');
-        return res.json(isFullRequested ? cachedArtworks : getLightweightArtworks(cachedArtworks));
+        return res.json(cachedArtworks);
       }
     }
   } catch (e) {
@@ -2439,7 +2439,7 @@ app.get('/api/artworks', async (req, res) => {
   const artworks = readJsonFile(ARTWORKS_FILE, []);
   cachedArtworks = artworks;
   res.setHeader('Cache-Control', 'public, max-age=60, stale-while-revalidate=120');
-  res.json(isFullRequested ? artworks : getLightweightArtworks(artworks));
+  res.json(artworks);
 });
 
 app.get('/api/artworks/:id', async (req, res) => {
