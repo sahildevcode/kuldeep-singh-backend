@@ -2413,55 +2413,59 @@ function getLightweightArtworks(list) {
 }
 
 app.get('/api/artworks', async (req, res) => {
-  // Check if client explicitly asks for full details (?full=true)
-  const isFullRequested = req.query.full === 'true';
+  res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+  res.setHeader('Pragma', 'no-cache');
+  res.setHeader('Expires', '0');
 
-  if (Array.isArray(cachedArtworks) && cachedArtworks.length > 0) {
-    res.setHeader('Cache-Control', 'public, max-age=60, stale-while-revalidate=120');
-    return res.json(cachedArtworks);
-  }
   try {
+    await initMongoDB().catch(() => {});
     if (mongoose.connection.readyState === 1) {
-      const artworks = await ArtworkModel.find({}).sort({ _id: -1 }).lean();
+      const artworks = await ArtworkModel.find({}).sort({ order: 1, _id: -1 }).lean();
       if (Array.isArray(artworks) && artworks.length > 0) {
         cachedArtworks = artworks.map((d) => {
           const { _id, __v, ...rest } = d;
           return { ...rest, id: rest.id || String(_id), detailImages: Array.isArray(rest.detailImages) ? rest.detailImages : [] };
         });
         writeJsonFile(ARTWORKS_FILE, cachedArtworks);
-        res.setHeader('Cache-Control', 'public, max-age=60, stale-while-revalidate=120');
         return res.json(cachedArtworks);
       }
     }
   } catch (e) {
     console.error('Mongo artworks get error:', e.message);
   }
+
+  if (Array.isArray(cachedArtworks) && cachedArtworks.length > 0) {
+    return res.json(cachedArtworks);
+  }
   const artworks = readJsonFile(ARTWORKS_FILE, []);
   cachedArtworks = artworks;
-  res.setHeader('Cache-Control', 'public, max-age=60, stale-while-revalidate=120');
   res.json(artworks);
 });
 
 app.get('/api/artworks/:id', async (req, res) => {
+  res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+  res.setHeader('Pragma', 'no-cache');
+  res.setHeader('Expires', '0');
   const targetId = req.params.id;
-  // First check in-memory cache
-  const item = cachedArtworks.find((a) => a.id === targetId || String(a._id) === targetId);
-  if (item) {
-    res.setHeader('Cache-Control', 'public, max-age=120, stale-while-revalidate=300');
-    return res.json(item);
-  }
+
   try {
+    await initMongoDB().catch(() => {});
     if (mongoose.connection.readyState === 1) {
       const conditions = [{ id: targetId }];
       if (mongoose.isValidObjectId(targetId)) conditions.push({ _id: targetId });
       const mongoItem = await ArtworkModel.findOne({ $or: conditions }).lean();
       if (mongoItem) {
-        res.setHeader('Cache-Control', 'public, max-age=120, stale-while-revalidate=300');
-        return res.json(mongoItem);
+        const { _id, __v, ...rest } = mongoItem;
+        return res.json({ ...rest, id: rest.id || String(_id), detailImages: Array.isArray(rest.detailImages) ? rest.detailImages : [] });
       }
     }
   } catch (e) {
     console.error('Mongo artwork get error:', e.message);
+  }
+
+  const item = cachedArtworks.find((a) => a.id === targetId || String(a._id) === targetId);
+  if (item) {
+    return res.json(item);
   }
   res.status(404).json({ error: 'Artwork not found' });
 });
@@ -2512,11 +2516,14 @@ app.post('/api/artworks', requireAdminAuth, async (req, res) => {
   // 4. Return success immediately (zero delay!)
   res.status(201).json({ success: true, artwork: newArtwork });
 
-  // 5. Asynchronously persist to MongoDB Atlas
-  if (mongoose.connection.readyState === 1) {
-    ArtworkModel.findOneAndUpdate({ id: newArtwork.id }, newArtwork, { upsert: true }).catch((e) =>
-      console.error('Async Mongo artwork insert error:', e.message)
-    );
+  // 5. Persist to MongoDB Atlas
+  try {
+    await initMongoDB().catch(() => {});
+    if (mongoose.connection.readyState === 1) {
+      await ArtworkModel.findOneAndUpdate({ id: newArtwork.id }, { $set: newArtwork }, { upsert: true, new: true });
+    }
+  } catch (e) {
+    console.error('Async Mongo artwork insert error:', e.message);
   }
 });
 
@@ -2585,38 +2592,76 @@ app.post('/api/artworks/reorder', requireAdminAuth, async (req, res) => {
 
 app.put('/api/artworks/:id', requireAdminAuth, async (req, res) => {
   const targetId = req.params.id;
-  const idx = cachedArtworks.findIndex((a) => a.id === targetId || String(a._id) === targetId);
-  if (idx !== -1) {
-    const updated = { ...cachedArtworks[idx], ...req.body, id: cachedArtworks[idx].id, updatedAt: new Date().toISOString() };
-    cachedArtworks[idx] = updated;
-    writeJsonFile(ARTWORKS_FILE, cachedArtworks);
-    broadcastUpdate('ARTWORK_UPDATED', updated);
-    res.json({ success: true, artwork: updated });
+  try {
+    await initMongoDB().catch(() => {});
 
-    if (mongoose.connection.readyState === 1) {
-      ArtworkModel.findOneAndUpdate({ id: targetId }, { ...req.body, id: targetId }, { new: true }).catch((e) =>
-        console.error('Async Mongo artwork update error:', e.message)
-      );
+    const updateData = { ...req.body, updatedAt: new Date().toISOString() };
+    delete updateData._id;
+
+    // Explicitly guarantee detailImages array if provided in body (handles removing all detail images)
+    if (req.body.detailImages !== undefined) {
+      updateData.detailImages = Array.isArray(req.body.detailImages) ? req.body.detailImages : [];
     }
-  } else {
-    res.status(404).json({ error: 'Artwork not found' });
+
+    const conditions = [{ id: targetId }];
+    if (mongoose.isValidObjectId(targetId)) conditions.push({ _id: targetId });
+
+    let mongoUpdated = null;
+    if (mongoose.connection.readyState === 1) {
+      mongoUpdated = await ArtworkModel.findOneAndUpdate(
+        { $or: conditions },
+        { $set: updateData },
+        { new: true, upsert: true }
+      ).lean();
+    }
+
+    // Update in-memory cache
+    const idx = cachedArtworks.findIndex((a) => a.id === targetId || String(a._id) === targetId);
+    let finalArtwork = mongoUpdated || { ...updateData, id: targetId };
+    if (mongoUpdated) {
+      const { _id, __v, ...rest } = mongoUpdated;
+      finalArtwork = { ...rest, id: rest.id || String(_id), detailImages: Array.isArray(rest.detailImages) ? rest.detailImages : [] };
+    }
+
+    if (idx !== -1) {
+      cachedArtworks[idx] = { ...cachedArtworks[idx], ...finalArtwork };
+    } else {
+      cachedArtworks.unshift(finalArtwork);
+    }
+
+    writeJsonFile(ARTWORKS_FILE, cachedArtworks);
+    broadcastUpdate('ARTWORK_UPDATED', finalArtwork);
+    console.log(`[BACKEND] Artwork Updated: ${targetId} (detailImages count: ${finalArtwork.detailImages ? finalArtwork.detailImages.length : 0})`);
+
+    res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
+    return res.json({ success: true, artwork: finalArtwork });
+  } catch (err) {
+    console.error('Mongo artwork update error:', err);
+    return res.status(500).json({ error: 'Failed to update artwork', details: err.message });
   }
 });
 
 app.delete('/api/artworks/:id', requireAdminAuth, async (req, res) => {
   const targetId = req.params.id;
-  cachedArtworks = cachedArtworks.filter((a) => a.id !== targetId && String(a._id) !== targetId);
-  writeJsonFile(ARTWORKS_FILE, cachedArtworks);
-  broadcastUpdate('ARTWORK_DELETED', { id: targetId });
-  console.log(`[BACKEND] Artwork Permanently Deleted: ${targetId}`);
-  res.json({ success: true, id: targetId });
+  try {
+    await initMongoDB().catch(() => {});
 
-  if (mongoose.connection.readyState === 1) {
-    const conditions = [{ id: targetId }];
-    if (mongoose.isValidObjectId(targetId)) conditions.push({ _id: targetId });
-    ArtworkModel.deleteMany({ $or: conditions }).catch((e) =>
-      console.error('Async Mongo artwork delete error:', e.message)
-    );
+    if (mongoose.connection.readyState === 1) {
+      const conditions = [{ id: targetId }];
+      if (mongoose.isValidObjectId(targetId)) conditions.push({ _id: targetId });
+      await ArtworkModel.deleteMany({ $or: conditions });
+    }
+
+    cachedArtworks = cachedArtworks.filter((a) => a.id !== targetId && String(a._id) !== targetId);
+    writeJsonFile(ARTWORKS_FILE, cachedArtworks);
+    broadcastUpdate('ARTWORK_DELETED', { id: targetId });
+    console.log(`[BACKEND] Artwork Permanently Deleted: ${targetId}`);
+
+    res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
+    return res.json({ success: true, id: targetId });
+  } catch (err) {
+    console.error('Mongo artwork delete error:', err);
+    return res.status(500).json({ error: 'Failed to delete artwork', details: err.message });
   }
 });
 
