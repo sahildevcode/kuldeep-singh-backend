@@ -300,7 +300,8 @@ const ArtworkSchema = new mongoose.Schema({
   featured: Boolean,
   paletteColors: Array,
   weight: String,
-  varnishType: String
+  varnishType: String,
+  series: String
 }, { timestamps: true, strict: false });
 
 const CourseSchema = new mongoose.Schema({
@@ -2495,6 +2496,7 @@ app.post('/api/artworks', requireAdminAuth, async (req, res) => {
     paletteColors: Array.isArray(body.paletteColors) && body.paletteColors.length > 0 ? body.paletteColors : ['#0E2A47', '#C5A059', '#E2DDD5'],
     weight: body.weight || '5 kg',
     varnishType: body.varnishType || 'Archival Satin Varnish',
+    series: (body.series || '').trim(),
     createdAt: new Date().toISOString()
   };
 
