@@ -732,8 +732,9 @@ export function createAdminAuthRouter(UserModel, findUserByEmailOrUsername) {
   });
 
   /**
-   * STEP 8: Request Admin Login Email Change
-   * Verifies current admin password, checks new email availability, and sends 6-digit OTP to new email.
+   * STEP 8A: Request Admin Login Email Change - Stage 1 (Current Email Verification)
+   * Verifies current admin password, checks new email availability, 
+   * and sends a 6-digit authorization OTP to the CURRENT admin email.
    */
   router.post('/request-email-change', requireAdminAuth, otpRequestRateLimiter, async (req, res) => {
     try {
@@ -787,7 +788,7 @@ export function createAdminAuthRouter(UserModel, findUserByEmailOrUsername) {
         return res.status(401).json({ success: false, error: 'गलत पासवर्ड (Incorrect current password)!' });
       }
 
-      // Check if new email is already in use by any other account
+      // Check if new email is already in use by another user
       const existingUser = await findUserByEmailOrUsername(cleanNewEmail);
       if (existingUser && existingUser.id !== user.id) {
         return res.status(400).json({
@@ -796,37 +797,18 @@ export function createAdminAuthRouter(UserModel, findUserByEmailOrUsername) {
         });
       }
 
-      // Check cooldown on recent OTP challenge for newEmail
-      const recentChallenge = await AdminOtpChallengeModel.findOne({
-        email: cleanNewEmail,
-        isUsed: false,
-        expiresAt: { $gt: new Date() }
-      }).sort({ createdAt: -1 });
-
-      if (recentChallenge) {
-        const timeSince = (Date.now() - new Date(recentChallenge.lastSentAt).getTime()) / 1000;
-        if (timeSince < 60) {
-          const waitSeconds = Math.ceil(60 - timeSince);
-          return res.status(429).json({
-            success: false,
-            error: `Please wait ${waitSeconds}s before requesting a new code for this email.`,
-            cooldownRemaining: waitSeconds
-          });
-        }
-      }
-
-      // Generate 6-digit OTP
+      // Generate 6-digit OTP for CURRENT email authorization
       const rawOtp = generateCryptoOtp();
       const salt = crypto.randomBytes(16).toString('hex');
       const otpHashed = hashOtp(rawOtp, salt);
       const expiresAt = new Date(Date.now() + 5 * 60 * 1000); // 5 minutes
 
-      // Invalidate existing unused challenges for newEmail
-      await AdminOtpChallengeModel.updateMany({ email: cleanNewEmail, isUsed: false }, { isUsed: true });
+      // Identifier for current email challenge
+      const challengeKey = `cur_change_${currentEmail}`;
+      await AdminOtpChallengeModel.updateMany({ email: challengeKey, isUsed: false }, { isUsed: true });
 
-      // Save challenge in DB
       await AdminOtpChallengeModel.create({
-        email: cleanNewEmail,
+        email: challengeKey,
         otpHashed,
         salt,
         attempts: 0,
@@ -836,16 +818,16 @@ export function createAdminAuthRouter(UserModel, findUserByEmailOrUsername) {
         isUsed: false
       });
 
-      // Dispatch verification OTP to newEmail
+      // Dispatch authorization OTP to CURRENT email
       const emailResult = await sendAdminOtpEmail({
-        toEmail: cleanNewEmail,
+        toEmail: currentEmail,
         otp: rawOtp,
         adminName: user.name || 'Kuldeep Singh'
       });
 
       await logAdminAudit({
         adminEmail: currentEmail,
-        action: 'EMAIL_CHANGE_OTP_REQUESTED',
+        action: 'EMAIL_CHANGE_CURRENT_OTP_REQUESTED',
         resource: '/api/admin/request-email-change',
         ip: req.ip,
         status: 'SUCCESS',
@@ -854,8 +836,10 @@ export function createAdminAuthRouter(UserModel, findUserByEmailOrUsername) {
 
       return res.json({
         success: true,
-        message: `A 6-digit verification code has been sent to ${cleanNewEmail}.`,
+        message: `Security verification code sent to your current email (${currentEmail}).`,
+        currentEmail,
         newEmail: cleanNewEmail,
+        step: 'verify_current',
         expiresInSeconds: 300,
         cooldownSeconds: 60,
         devMode: Boolean(emailResult.devMode),
@@ -868,7 +852,118 @@ export function createAdminAuthRouter(UserModel, findUserByEmailOrUsername) {
   });
 
   /**
-   * STEP 9: Confirm Admin Login Email Change
+   * STEP 8B: Verify Current Email OTP and Dispatch OTP to NEW Email (Stage 2)
+   */
+  router.post('/verify-current-email-change', requireAdminAuth, otpVerifyRateLimiter, async (req, res) => {
+    try {
+      const currentEmail = req.admin?.email?.toLowerCase().trim();
+      if (!currentEmail) {
+        return res.status(401).json({ success: false, error: 'Unauthorized admin session' });
+      }
+
+      const { newEmail, currentOtp } = req.body || {};
+      if (!newEmail || typeof newEmail !== 'string') {
+        return res.status(400).json({ success: false, error: 'New email is required' });
+      }
+      if (!currentOtp || typeof currentOtp !== 'string' || currentOtp.trim().length !== 6) {
+        return res.status(400).json({ success: false, error: 'Valid 6-digit code for current email is required' });
+      }
+
+      const cleanNewEmail = newEmail.toLowerCase().trim();
+      const cleanOtp = currentOtp.trim();
+      const challengeKey = `cur_change_${currentEmail}`;
+
+      const challenge = await AdminOtpChallengeModel.findOne({
+        email: challengeKey,
+        isUsed: false,
+        expiresAt: { $gt: new Date() }
+      }).sort({ createdAt: -1 });
+
+      if (!challenge) {
+        return res.status(400).json({
+          success: false,
+          error: 'Verification code for current email has expired. Please request again.'
+        });
+      }
+
+      if (challenge.attempts >= challenge.maxAttempts) {
+        challenge.isUsed = true;
+        await challenge.save();
+        return res.status(429).json({
+          success: false,
+          error: 'Maximum attempts exceeded on current email. Please start over.'
+        });
+      }
+
+      const computedHash = hashOtp(cleanOtp, challenge.salt);
+      const isMatch = crypto.timingSafeEqual(Buffer.from(computedHash), Buffer.from(challenge.otpHashed));
+
+      if (!isMatch) {
+        challenge.attempts += 1;
+        await challenge.save();
+        const attemptsLeft = challenge.maxAttempts - challenge.attempts;
+        return res.status(400).json({
+          success: false,
+          error: `Current email code incorrect. ${attemptsLeft} attempt(s) remaining.`,
+          attemptsRemaining: attemptsLeft
+        });
+      }
+
+      challenge.isUsed = true;
+      await challenge.save();
+
+      // Now generate second OTP for the NEW email
+      const newOtp = generateCryptoOtp();
+      const newSalt = crypto.randomBytes(16).toString('hex');
+      const newOtpHashed = hashOtp(newOtp, newSalt);
+      const newExpiresAt = new Date(Date.now() + 5 * 60 * 1000);
+
+      const newChallengeKey = `new_change_${cleanNewEmail}`;
+      await AdminOtpChallengeModel.updateMany({ email: newChallengeKey, isUsed: false }, { isUsed: true });
+
+      await AdminOtpChallengeModel.create({
+        email: newChallengeKey,
+        otpHashed: newOtpHashed,
+        salt: newSalt,
+        attempts: 0,
+        maxAttempts: 5,
+        expiresAt: newExpiresAt,
+        lastSentAt: new Date(),
+        isUsed: false
+      });
+
+      // Dispatch OTP to NEW email
+      const emailResult = await sendAdminOtpEmail({
+        toEmail: cleanNewEmail,
+        otp: newOtp,
+        adminName: 'Kuldeep Singh'
+      });
+
+      await logAdminAudit({
+        adminEmail: currentEmail,
+        action: 'EMAIL_CHANGE_CURRENT_VERIFIED',
+        resource: '/api/admin/verify-current-email-change',
+        ip: req.ip,
+        status: 'SUCCESS',
+        details: { targetNewEmail: cleanNewEmail, devMode: Boolean(emailResult.devMode) }
+      });
+
+      return res.json({
+        success: true,
+        message: `Current email verified! A 6-digit confirmation code has now been sent to ${cleanNewEmail}.`,
+        newEmail: cleanNewEmail,
+        step: 'verify_new',
+        devMode: Boolean(emailResult.devMode),
+        devOtp: emailResult.devMode ? newOtp : undefined
+      });
+    } catch (err) {
+      console.error('[ADMIN-VERIFY-CURRENT-EMAIL-CHANGE] Error:', err);
+      res.status(500).json({ success: false, error: err.message || 'Error verifying current email' });
+    }
+  });
+
+  /**
+   * STEP 9: Confirm Admin Login Email Change (Stage 3: New Email OTP Verification)
    * Verifies the 6-digit OTP sent to new email, updates UserModel, AdminSessions, and re-issues token.
    */
   router.post('/confirm-email-change', requireAdminAuth, otpVerifyRateLimiter, async (req, res) => {
@@ -888,10 +983,11 @@ export function createAdminAuthRouter(UserModel, findUserByEmailOrUsername) {
 
       const cleanNewEmail = newEmail.toLowerCase().trim();
       const cleanOtp = otp.trim();
+      const newChallengeKey = `new_change_${cleanNewEmail}`;
 
       // Find active challenge for cleanNewEmail
       const challenge = await AdminOtpChallengeModel.findOne({
-        email: cleanNewEmail,
+        email: newChallengeKey,
         isUsed: false,
         expiresAt: { $gt: new Date() }
       }).sort({ createdAt: -1 });
@@ -899,7 +995,7 @@ export function createAdminAuthRouter(UserModel, findUserByEmailOrUsername) {
       if (!challenge) {
         return res.status(400).json({
           success: false,
-          error: 'Verification code has expired or was already used. Please request a new code.'
+          error: 'Verification code for new email has expired or was already used. Please restart verification.'
         });
       }
 
@@ -909,7 +1005,7 @@ export function createAdminAuthRouter(UserModel, findUserByEmailOrUsername) {
         await challenge.save();
         return res.status(429).json({
           success: false,
-          error: 'Maximum verification attempts exceeded. Please request a new code.'
+          error: 'Maximum verification attempts exceeded on new email. Please restart.'
         });
       }
 
@@ -923,7 +1019,7 @@ export function createAdminAuthRouter(UserModel, findUserByEmailOrUsername) {
         const attemptsLeft = challenge.maxAttempts - challenge.attempts;
         return res.status(400).json({
           success: false,
-          error: `Incorrect verification code. ${attemptsLeft} attempt(s) remaining.`,
+          error: `Incorrect verification code for new email. ${attemptsLeft} attempt(s) remaining.`,
           attemptsRemaining: attemptsLeft
         });
       }
