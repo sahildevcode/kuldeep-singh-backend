@@ -458,15 +458,31 @@ export function createAdminAuthRouter(UserModel, findUserByEmailOrUsername) {
 
   /**
    * STEP 4: Session Validation Endpoint
+   * Returns current active admin email directly from Database so all devices sync instantly.
    */
   router.get('/session', requireAdminAuth, async (req, res) => {
+    let resolvedEmail = req.admin.email;
+    let resolvedName = req.admin.name;
+
+    try {
+      if (UserModel) {
+        const latestAdmin = await UserModel.findOne({ role: 'admin' }).sort({ updatedAt: -1, createdAt: -1 });
+        if (latestAdmin && latestAdmin.email) {
+          resolvedEmail = latestAdmin.email;
+          resolvedName = latestAdmin.name || resolvedName;
+        }
+      }
+    } catch (e) {
+      console.warn('[AUTH] Error resolving latest admin user for session:', e.message);
+    }
+
     res.json({
       success: true,
       authenticated: true,
       admin: {
-        email: req.admin.email,
-        name: req.admin.name,
-        role: req.admin.role
+        email: resolvedEmail,
+        name: resolvedName,
+        role: 'admin'
       }
     });
   });

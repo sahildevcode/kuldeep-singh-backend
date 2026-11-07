@@ -83,9 +83,25 @@ export async function requireAdminAuth(req, res, next) {
       token === process.env.ADMIN_SECRET ||
       token === process.env.SESSION_SECRET
     ) {
+      let activeAdminEmail = 'artistkuldeepsingh01@gmail.com';
+      try {
+        const mongoose = (await import('mongoose')).default;
+        if (mongoose.connection && mongoose.connection.readyState === 1) {
+          const UserModel = mongoose.models.User;
+          if (UserModel) {
+            const dbAdmin = await UserModel.findOne({ role: 'admin' }).sort({ updatedAt: -1, createdAt: -1 });
+            if (dbAdmin?.email) {
+              activeAdminEmail = dbAdmin.email.toLowerCase().trim();
+            }
+          }
+        }
+      } catch (e) {
+        console.warn('[AUTH] Dynamic master admin email query error:', e.message);
+      }
+
       req.admin = {
         sessionId: 'master_admin_session',
-        email: 'artistkuldeepsingh01@gmail.com',
+        email: activeAdminEmail,
         name: 'Administrator',
         role: 'admin'
       };
