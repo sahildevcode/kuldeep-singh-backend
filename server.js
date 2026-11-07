@@ -2414,9 +2414,8 @@ function getLightweightArtworks(list) {
 }
 
 app.get('/api/artworks', async (req, res) => {
-  res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
-  res.setHeader('Pragma', 'no-cache');
-  res.setHeader('Expires', '0');
+  // Edge CDN Cache: 60s fresh, 120s stale-while-revalidate to eliminate Origin bandwidth burn
+  res.setHeader('Cache-Control', 'public, max-age=60, s-maxage=60, stale-while-revalidate=120');
 
   try {
     await initMongoDB().catch(() => {});
@@ -2444,9 +2443,7 @@ app.get('/api/artworks', async (req, res) => {
 });
 
 app.get('/api/artworks/:id', async (req, res) => {
-  res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
-  res.setHeader('Pragma', 'no-cache');
-  res.setHeader('Expires', '0');
+  res.setHeader('Cache-Control', 'public, max-age=60, s-maxage=60, stale-while-revalidate=120');
   const targetId = req.params.id;
 
   try {
