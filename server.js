@@ -14,6 +14,32 @@ import Razorpay from 'razorpay';
 import multer from 'multer';
 import nodemailer from 'nodemailer';
 import compression from 'compression';
+import { v2 as cloudinary } from 'cloudinary';
+
+// Cloudinary configuration for ultra-fast, lightweight image storage
+cloudinary.config({
+  cloud_name: process.env.CLOUDINARY_CLOUD_NAME || 'lxkjcbqh',
+  api_key: process.env.CLOUDINARY_API_KEY || '253981819961975',
+  api_secret: process.env.CLOUDINARY_API_SECRET || 'DZuqKSfLFLY-NvsGecJG4XpoTUM'
+});
+
+export async function uploadImageToCloudinary(dataUriOrUrl, prefix = 'artwork') {
+  if (!dataUriOrUrl || typeof dataUriOrUrl !== 'string') return dataUriOrUrl;
+  if (!dataUriOrUrl.startsWith('data:image')) return dataUriOrUrl; // already an https link
+  try {
+    const res = await cloudinary.uploader.upload(dataUriOrUrl, {
+      folder: 'kuldeep_artworks',
+      public_id: `${prefix}_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+      resource_type: 'image',
+      format: 'webp',
+      transformation: [{ quality: 'auto:best', fetch_format: 'auto' }]
+    });
+    return res.secure_url;
+  } catch (err) {
+    console.error('[CLOUDINARY] Upload error:', err.message);
+    return dataUriOrUrl;
+  }
+}
 
 // Force public DNS resolution to prevent local ISP SRV resolution issues
 try { dns.setServers(['8.8.8.8', '1.1.1.1']); } catch (e) {}
@@ -2475,16 +2501,37 @@ app.post('/api/artworks', requireAdminAuth, async (req, res) => {
     return res.status(400).json({ error: 'Dummy artwork cannot be created or restored' });
   }
 
+  const artId = body.id || `art-${Date.now()}`;
+
+  // Upload main image to Cloudinary if it is base64
+  let mainImageUrl = body.image || 'https://images.unsplash.com/photo-1579783900882-c0d3dad7b119?q=80&w=1400&auto=format&fit=crop';
+  if (mainImageUrl.startsWith('data:image')) {
+    mainImageUrl = await uploadImageToCloudinary(mainImageUrl, `art_${artId}_main`);
+  }
+
+  // Upload all detail images to Cloudinary in parallel if base64
+  let detailImagesUrls = [];
+  if (Array.isArray(body.detailImages) && body.detailImages.length > 0) {
+    detailImagesUrls = await Promise.all(
+      body.detailImages.map((img, idx) => {
+        if (img && img.startsWith('data:image')) {
+          return uploadImageToCloudinary(img, `art_${artId}_detail_${idx + 1}`);
+        }
+        return img;
+      })
+    );
+  }
+
   const newArtwork = {
-    id: body.id || `art-${Date.now()}`,
+    id: artId,
     title: body.title || 'Untitled Artwork',
     subtitle: body.subtitle || '',
     year: body.year || new Date().getFullYear(),
     medium: body.medium || 'Oil on Canvas',
     dimensions: body.dimensions || '24 x 36 in',
     price: Number(body.price) || 1000,
-    image: body.image || 'https://images.unsplash.com/photo-1579783900882-c0d3dad7b119?q=80&w=1400&auto=format&fit=crop',
-    detailImages: Array.isArray(body.detailImages) ? body.detailImages : [],
+    image: mainImageUrl,
+    detailImages: detailImagesUrls,
     description: body.description || '',
     story: body.story || '',
     framed: Boolean(body.framed),
@@ -2597,9 +2644,22 @@ app.put('/api/artworks/:id', requireAdminAuth, async (req, res) => {
     const updateData = { ...req.body, updatedAt: new Date().toISOString() };
     delete updateData._id;
 
-    // Explicitly guarantee detailImages array if provided in body (handles removing all detail images)
+    // Upload main image to Cloudinary if it is new base64
+    if (updateData.image && typeof updateData.image === 'string' && updateData.image.startsWith('data:image')) {
+      updateData.image = await uploadImageToCloudinary(updateData.image, `art_${targetId}_main`);
+    }
+
+    // Upload detail images to Cloudinary if any new base64 images
     if (req.body.detailImages !== undefined) {
-      updateData.detailImages = Array.isArray(req.body.detailImages) ? req.body.detailImages : [];
+      const rawDetails = Array.isArray(req.body.detailImages) ? req.body.detailImages : [];
+      updateData.detailImages = await Promise.all(
+        rawDetails.map((img, idx) => {
+          if (img && typeof img === 'string' && img.startsWith('data:image')) {
+            return uploadImageToCloudinary(img, `art_${targetId}_detail_${idx + 1}`);
+          }
+          return img;
+        })
+      );
     }
 
     const conditions = [{ id: targetId }];
